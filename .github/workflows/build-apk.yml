@@ -23,7 +23,7 @@ jobs:
           cache: true
 
       - name: إنشاء ملفات Android
-        run: flutter create --platforms=android .
+        run: flutter create --project-name geoscan_ai --platforms=android .
 
       - name: تثبيت الحزم
         run: flutter pub get
