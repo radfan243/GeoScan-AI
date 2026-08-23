@@ -29,6 +29,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void startTest() {
+    if (scanning) return;
+
     setState(() {
       scanning = true;
     });
@@ -49,6 +51,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void stopTest() {
+    if (!scanning) return;
+
     setState(() {
       scanning = false;
     });
@@ -61,13 +65,11 @@ class _ScanScreenState extends State<ScanScreen> {
         title: const Text('المسح المباشر'),
         centerTitle: true,
       ),
-
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Column(
             children: [
-
               const Text(
                 'LIVE SCAN',
                 style: TextStyle(
@@ -88,7 +90,6 @@ class _ScanScreenState extends State<ScanScreen> {
 
               const SizedBox(height: 25),
 
-              // نسبة الإشارة
               Text(
                 '${signal.toStringAsFixed(1)}%',
                 style: const TextStyle(
@@ -108,7 +109,6 @@ class _ScanScreenState extends State<ScanScreen> {
 
               const SizedBox(height: 30),
 
-              // الرسم البياني
               Expanded(
                 child: Container(
                   width: double.infinity,
@@ -130,7 +130,6 @@ class _ScanScreenState extends State<ScanScreen> {
 
               const SizedBox(height: 20),
 
-              // الحالة
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -154,10 +153,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
               const SizedBox(height: 15),
 
-              // الأزرار
               Row(
                 children: [
-
                   Expanded(
                     child: FilledButton.icon(
                       onPressed:
@@ -190,6 +187,8 @@ class _ScanScreenState extends State<ScanScreen> {
                   color: Colors.white38,
                 ),
               ),
+
+              const SizedBox(height: 10),
             ],
           ),
         ),
@@ -221,17 +220,17 @@ class SignalPainter extends CustomPainter {
 
     final path = Path();
 
-    final maxPoints = values.length;
+    final int maxPoints = values.length;
 
     for (int i = 0; i < maxPoints; i++) {
-      final x = maxPoints == 1
-          ? 0
+      final double x = maxPoints == 1
+          ? 0.0
           : i * size.width / (maxPoints - 1);
 
-      final normalized =
-          values[i].clamp(0, 100) / 100;
+      final double normalized =
+          (values[i].clamp(0.0, 100.0) / 100.0).toDouble();
 
-      final y =
+      final double y =
           size.height - (normalized * size.height);
 
       if (i == 0) {
@@ -248,6 +247,6 @@ class SignalPainter extends CustomPainter {
   bool shouldRepaint(
     covariant SignalPainter oldDelegate,
   ) {
-    return oldDelegate.values != values;
+    return true;
   }
 }
