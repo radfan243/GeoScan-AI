@@ -57,7 +57,7 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBoxx(height: 8),
 
               const Text(
                 'نظام تحليل الإشارات الأرضية',
