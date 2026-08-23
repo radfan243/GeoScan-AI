@@ -1,30 +1,32 @@
-
 import 'dart:async';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
-class BluetoothService {
-  BluetoothDevice? connectedDevice;
+class BluetoothServiceManager {
+  fbp.BluetoothDevice? connectedDevice;
 
-  StreamSubscription<List<ScanResult>>? _scanSubscription;
-  StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
+  StreamSubscription<List<fbp.ScanResult>>? _scanSubscription;
+  StreamSubscription<fbp.BluetoothDeviceState>? _connectionSubscription;
 
-  Future<List<ScanResult>> scanForDevices({
+  Future<List<fbp.ScanResult>> scanForDevices({
     Duration duration = const Duration(seconds: 6),
   }) async {
-    final List<ScanResult> results = [];
+    final List<fbp.ScanResult> results = [];
 
     await _scanSubscription?.cancel();
 
-    final completer = Completer<List<ScanResult>>();
+    final completer = Completer<List<fbp.ScanResult>>();
 
     _scanSubscription =
-        FlutterBluePlus.scanResults.listen((scanResults) {
+        fbp.FlutterBluePlus.scanResults.listen((scanResults) {
       results.clear();
       results.addAll(scanResults);
     });
 
     try {
-      await FlutterBluePlus.startScan(timeout: duration);
+      await fbp.FlutterBluePlus.startScan(timeout: duration);
+
+      // Wait for the timeout to finish so results can accumulate.
+      await Future.delayed(duration);
 
       if (!completer.isCompleted) {
         completer.complete(results);
@@ -33,12 +35,14 @@ class BluetoothService {
       if (!completer.isCompleted) {
         completer.completeError(e);
       }
+    } finally {
+      await fbp.FlutterBluePlus.stopScan();
     }
 
     return completer.future;
   }
 
-  Future<void> connect(BluetoothDevice device) async {
+  Future<void> connect(fbp.BluetoothDevice device) async {
     await device.connect(
       timeout: const Duration(seconds: 10),
       autoConnect: false,
@@ -56,12 +60,14 @@ class BluetoothService {
 
   bool get isConnected => connectedDevice != null;
 
-  Future<List<BluetoothService>> discoverServices() async {
+  Future<List<fbp.BluetoothService>> discoverServices() async {
     if (connectedDevice == null) {
       throw Exception('لا يوجد جهاز ESP32 متصل');
     }
 
-    return await connectedDevice!.discoverServices();
+    // discoverServices() returns Future<List<fbp.BluetoothService>>
+    final services = await connectedDevice!.discoverServices();
+    return services;
   }
 
   Future<void> dispose() async {
