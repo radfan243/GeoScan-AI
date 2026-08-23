@@ -1,1 +1,41 @@
+name: Build GeoScan AI APK
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: تحميل المشروع
+        uses: actions/checkout@v4
+
+      - name: تثبيت Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: إنشاء ملفات Android
+        run: flutter create --platforms=android .
+
+      - name: تثبيت الحزم
+        run: flutter pub get
+
+      - name: فحص المشروع
+        run: flutter analyze
+
+      - name: بناء APK
+        run: flutter build apk --release
+
+      - name: رفع ملف APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeoScan-AI-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
