@@ -57,7 +57,7 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBoxx(height: 8),
+              const SizedBox(height: 8),
 
               const Text(
                 'نظام تحليل الإشارات الأرضية',
@@ -160,7 +160,7 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 25),
 
               const Text(
-                'ملاحظة: التطبيق لا يستخدم مستشعر الهاتف للكشف عن الذهب. البيانات ستأتي من جهاز الاستشعار الخارجي الحقيقي.',
+                'ملاحظة: التطبيق لا يستخدم مستشعر الهاتف للكشف عن الذهب. البيانات ستأتي من جهاز الاستشعار الخارجي.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
