@@ -1,141 +1,74 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-class BluetoothScreen extends StatefulWidget {
-  const BluetoothScreen({super.key});
+class BluetoothService {
+  BluetoothDevice? connectedDevice;
 
-  @override
-  State<BluetoothScreen> createState() => _BluetoothScreenState();
-}
+  StreamSubscription<List<ScanResult>>? scanSubscription;
 
-class _BluetoothScreenState extends State<BluetoothScreen> {
-  List<ScanResult> devices = [];
-  bool scanning = false;
+  Future<List<ScanResult>> scanForDevices({
+    Duration duration = const Duration(seconds: 6),
+  }) async {
+    final List<ScanResult> results = [];
 
-  Future<void> startScan() async {
-    setState(() {
-      devices.clear();
-      scanning = true;
+    await scanSubscription?.cancel();
+
+    scanSubscription =
+        FlutterBluePlus.scanResults.listen((scanResults) {
+      results.clear();
+      results.addAll(scanResults);
     });
 
     try {
       await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 8),
+        timeout: duration,
       );
 
-      final results = await FlutterBluePlus.scanResults.first;
+      await Future.delayed(duration);
 
-      if (!mounted) return;
-
-      setState(() {
-        devices = results;
-        scanning = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        scanning = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('حدث خطأ أثناء البحث: $e'),
-        ),
-      );
+      return results;
+    } finally {
+      await FlutterBluePlus.stopScan();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('اتصال Bluetooth'),
-        centerTitle: true,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const Icon(
-              Icons.bluetooth_searching,
-              size: 80,
-              color: Colors.cyanAccent,
-            ),
-
-            const SizedBox(height: 20),
-
-            const Text(
-              'البحث عن جهاز ESP32',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            const Text(
-              'قم بتشغيل ESP32 ثم اضغط زر البحث.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
-
-            const SizedBox(height: 25),
-
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: FilledButton.icon(
-                onPressed: scanning ? null : startScan,
-                icon: const Icon(Icons.search),
-                label: Text(
-                  scanning ? 'جاري البحث...' : 'البحث عن الأجهزة',
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            Expanded(
-              child: devices.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'لا توجد أجهزة مكتشفة حتى الآن.',
-                        style: TextStyle(color: Colors.white54),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: devices.length,
-                      itemBuilder: (context, index) {
-                        final device = devices[index].device;
-
-                        final name = device.platformName.isEmpty
-                            ? 'ESP32 غير مسمى'
-                            : device.platformName;
-
-                        return Card(
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.bluetooth,
-                              color: Colors.cyanAccent,
-                            ),
-                            title: Text(name),
-                            subtitle: Text(
-                              device.remoteId.toString(),
-                            ),
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios,
-                              size: 16,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
+  Future<void> connect(
+    BluetoothDevice device,
+  ) async {
+    await device.connect(
+      timeout: const Duration(seconds: 10),
+      autoConnect: false,
     );
+
+    connectedDevice = device;
+  }
+
+  Future<void> disconnect() async {
+    if (connectedDevice != null) {
+      await connectedDevice!.disconnect();
+      connectedDevice = null;
+    }
+  }
+
+  bool get isConnected {
+    return connectedDevice != null;
+  }
+
+  Future<List<BluetoothService>>
+      discoverServices() async {
+    if (connectedDevice == null) {
+      throw Exception(
+        'لا يوجد جهاز ESP32 متصل',
+      );
+    }
+
+    final services =
+        await connectedDevice!.discoverServices();
+
+    return services;
+  }
+
+  Future<void> dispose() async {
+    await scanSubscription?.cancel();
   }
 }
