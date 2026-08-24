@@ -10,7 +10,7 @@ class BluetoothScreen extends StatefulWidget {
 }
 
 class _BluetoothScreenState extends State<BluetoothScreen> {
-  final BluetoothService _btService = BluetoothService();
+  final BluetoothManager _btManager = BluetoothManager();
   List<fbp.ScanResult> _devices = [];
   bool _scanning = false;
 
@@ -20,7 +20,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
     });
 
     try {
-      final results = await _btService.scanForDevices();
+      final results = await _btManager.scanForDevices();
       setState(() {
         _devices = results;
       });
@@ -36,7 +36,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
 
   @override
   void dispose() {
-    _btService.dispose();
+    _btManager.dispose();
     super.dispose();
   }
 
@@ -70,7 +70,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
                       trailing: FilledButton(
                         onPressed: () async {
                           try {
-                            await _btService.connect(r.device);
+                            await _btManager.connect(r.device);
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('Connected')),
                             );
