@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
-class BluetoothServiceManager {
+class BluetoothService {
   fbp.BluetoothDevice? connectedDevice;
 
   StreamSubscription<List<fbp.ScanResult>>? _scanSubscription;
@@ -49,6 +49,12 @@ class BluetoothServiceManager {
     );
 
     connectedDevice = device;
+
+    // Optionally track connection state
+    _connectionSubscription =
+        connectedDevice?.state.listen((state) {
+      // handle state changes if needed
+    });
   }
 
   Future<void> disconnect() async {
@@ -72,6 +78,6 @@ class BluetoothServiceManager {
 
   Future<void> dispose() async {
     await _scanSubscription?.cancel();
-    await _connectionSubscription?.cancel();
+    await _connection_subscription?.cancel();
   }
 }
