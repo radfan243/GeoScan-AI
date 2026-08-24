@@ -5,7 +5,7 @@ class BluetoothService {
   fbp.BluetoothDevice? connectedDevice;
 
   StreamSubscription<List<fbp.ScanResult>>? _scanSubscription;
-  StreamSubscription<fbp.BluetoothDeviceState>? _connectionSubscription;
+  StreamSubscription<fbp.BluetoothConnectionState>? _connectionSubscription;
 
   Future<List<fbp.ScanResult>> scanForDevices({
     Duration duration = const Duration(seconds: 6),
@@ -25,7 +25,6 @@ class BluetoothService {
     try {
       await fbp.FlutterBluePlus.startScan(timeout: duration);
 
-      // Wait for the timeout to finish so results can accumulate.
       await Future.delayed(duration);
 
       if (!completer.isCompleted) {
@@ -50,14 +49,16 @@ class BluetoothService {
 
     connectedDevice = device;
 
-    // Optionally track connection state
     _connectionSubscription =
         connectedDevice?.state.listen((state) {
-      // handle state changes if needed
+      // يمكن التعامل مع حالة الاتصال هنا عند الحاجة
     });
   }
 
   Future<void> disconnect() async {
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+
     if (connectedDevice != null) {
       await connectedDevice!.disconnect();
       connectedDevice = null;
@@ -71,13 +72,14 @@ class BluetoothService {
       throw Exception('لا يوجد جهاز ESP32 متصل');
     }
 
-    // discoverServices() returns Future<List<fbp.BluetoothService>>
-    final services = await connectedDevice!.discoverServices();
-    return services;
+    return await connectedDevice!.discoverServices();
   }
 
   Future<void> dispose() async {
     await _scanSubscription?.cancel();
     await _connectionSubscription?.cancel();
+
+    _scanSubscription = null;
+    _connectionSubscription = null;
   }
 }
