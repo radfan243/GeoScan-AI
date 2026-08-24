@@ -78,6 +78,6 @@ class BluetoothService {
 
   Future<void> dispose() async {
     await _scanSubscription?.cancel();
-    await _connection_subscription?.cancel();
+    await _connectionSubscription?.cancel();
   }
 }
