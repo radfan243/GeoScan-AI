@@ -12,65 +12,72 @@ class ScanScreen extends StatefulWidget {
 class _ScanScreenState extends State<ScanScreen> {
   final List<double> signalHistory = [];
 
+  Timer? _timer;
+  final math.Random _random = math.Random();
+
   double signal = 0;
   bool scanning = false;
-  Timer? _scanTimer;
+
+  double sensitivity = 75;
+  double stability = 78;
+  double depth = 0;
+
+  String filter = 'متوسطة';
 
   final List<String> targets = [
     'ذهب',
-    'معدن',
-    'فضة',
     'نحاس',
-    'ألماس',
+    'فضة',
+    'حديد',
     'ماء',
   ];
 
-  final Set<String> selectedTargets = {
-    'ذهب',
-    'معدن',
-    'فضة',
-    'نحاس',
-    'ألماس',
-    'ماء',
-  };
-
-  void addTestSignal() {
-    final random = math.Random();
-
-    final double newSignal =
-        (signal * 0.70) + (random.nextDouble() * 100 * 0.30);
-
-    setState(() {
-      signal = newSignal.clamp(0, 100).toDouble();
-
-      signalHistory.add(signal);
-
-      if (signalHistory.length > 60) {
-        signalHistory.removeAt(0);
-      }
-    });
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
-  void startTest() {
+  void startScan() {
     if (scanning) return;
 
     setState(() {
       scanning = true;
     });
 
-    _scanTimer = Timer.periodic(
-      const Duration(milliseconds: 350),
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 500),
       (_) {
-        if (mounted && scanning) {
-          addTestSignal();
-        }
+        if (!mounted || !scanning) return;
+
+        final variation = (_random.nextDouble() - 0.5) * 18;
+
+        setState(() {
+          signal = (signal + variation).clamp(0, 100).toDouble();
+
+          if (signal < 5) {
+            signal = 10 + _random.nextDouble() * 15;
+          }
+
+          signalHistory.add(signal);
+
+          if (signalHistory.length > 50) {
+            signalHistory.removeAt(0);
+          }
+
+          stability =
+              (70 + _random.nextDouble() * 25).clamp(0, 100);
+
+          depth =
+              ((signal / 100) * 2.5).clamp(0.05, 2.5).toDouble();
+        });
       },
     );
   }
 
-  void stopTest() {
-    _scanTimer?.cancel();
-    _scanTimer = null;
+  void stopScan() {
+    _timer?.cancel();
+    _timer = null;
 
     if (!mounted) return;
 
@@ -79,575 +86,28 @@ class _ScanScreenState extends State<ScanScreen> {
     });
   }
 
-  void toggleTarget(String target) {
-    setState(() {
-      if (selectedTargets.contains(target)) {
-        selectedTargets.remove(target);
-      } else {
-        selectedTargets.add(target);
-      }
-    });
-  }
-
-  void selectAllTargets() {
-    setState(() {
-      selectedTargets
-        ..clear()
-        ..addAll(targets);
-    });
-  }
-
   Color get signalColor {
     if (signal < 25) return Colors.redAccent;
-    if (signal < 50) return Colors.deepOrangeAccent;
+    if (signal < 50) return Colors.orangeAccent;
     if (signal < 75) return Colors.amberAccent;
     return Colors.greenAccent;
   }
 
-  String get signalStatus {
+  String get signalText {
     if (signal < 25) return 'إشارة ضعيفة';
     if (signal < 50) return 'إشارة متوسطة';
     if (signal < 75) return 'إشارة جيدة';
     return 'إشارة قوية';
   }
 
-  @override
-  void dispose() {
-    _scanTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = signalColor;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF060B18),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF060B18),
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'GeoScan AI',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-          ),
-        ),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          child: Column(
-            children: [
-              const Text(
-                'المسح المباشر',
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.white70,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-              const SizedBox(height: 4),
-
-              const Text(
-                'تحليل الإشارة لحظيًا',
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 13,
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // مؤشر رئيسي
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF10243A),
-                      Color(0xFF091221),
-                    ],
-                  ),
-                  border: Border.all(
-                    color: color.withOpacity(0.45),
-                    width: 1.5,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      signal.toStringAsFixed(1),
-                      style: TextStyle(
-                        fontSize: 58,
-                        fontWeight: FontWeight.bold,
-                        color: color,
-                      ),
-                    ),
-                    const Text(
-                      'SIGNAL',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        letterSpacing: 4,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      signalStatus,
-                      style: TextStyle(
-                        color: color,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 17,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // عداد الدرجات
-              Container(
-                padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.025),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 65,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: List.generate(
-                          30,
-                          (index) {
-                            final level = ((index + 1) / 30) * 100;
-                            final active = signal >= level;
-
-                            Color barColor;
-
-                            if (index < 8) {
-                              barColor = Colors.redAccent;
-                            } else if (index < 15) {
-                              barColor = Colors.deepOrangeAccent;
-                            } else if (index < 22) {
-                              barColor = Colors.amberAccent;
-                            } else {
-                              barColor = Colors.greenAccent;
-                            }
-
-                            return Expanded(
-                              child: AnimatedContainer(
-                                duration:
-                                    const Duration(milliseconds: 250),
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 1.5,
-                                ),
-                                height: 18 + (index * 1.5),
-                                decoration: BoxDecoration(
-                                  borderRadius:
-                                      BorderRadius.circular(4),
-                                  color: active
-                                      ? barColor
-                                      : Colors.white.withOpacity(0.07),
-                                  boxShadow: active
-                                      ? [
-                                          BoxShadow(
-                                            color:
-                                                barColor.withOpacity(0.25),
-                                            blurRadius: 6,
-                                          ),
-                                        ]
-                                      : null,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 5),
-
-                    const Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'ضعيفة',
-                          style: TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 11,
-                          ),
-                        ),
-                        Text(
-                          'متوسطة',
-                          style: TextStyle(
-                            color: Colors.amberAccent,
-                            fontSize: 11,
-                          ),
-                        ),
-                        Text(
-                          'قوية',
-                          style: TextStyle(
-                            color: Colors.greenAccent,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // اختيار نوع الهدف
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1424),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '🎯 ماذا تريد أن تبحث عنه؟',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 6),
-
-                    const Text(
-                      'يمكنك اختيار هدف واحد أو عدة أهداف',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 12,
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // زر الكل
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: selectAllTargets,
-                        icon: const Icon(
-                          Icons.select_all,
-                          color: Colors.cyanAccent,
-                        ),
-                        label: const Text(
-                          'تحديد الكل',
-                          style: TextStyle(
-                            color: Colors.cyanAccent,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: targets.map((target) {
-                        final selected =
-                            selectedTargets.contains(target);
-
-                        return FilterChip(
-                          selected: selected,
-                          label: Text(target),
-                          onSelected: (_) {
-                            toggleTarget(target);
-                          },
-                          selectedColor:
-                              Colors.cyanAccent.withOpacity(0.18),
-                          checkmarkColor: Colors.cyanAccent,
-                          labelStyle: TextStyle(
-                            color: selected
-                                ? Colors.cyanAccent
-                                : Colors.white70,
-                            fontWeight: selected
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
-                          backgroundColor:
-                              Colors.white.withOpacity(0.05),
-                          side: BorderSide(
-                            color: selected
-                                ? Colors.cyanAccent
-                                : Colors.white12,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // الرسم البياني
-              Container(
-                width: double.infinity,
-                height: 270,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1424),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.show_chart,
-                          color: Colors.cyanAccent,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'حركة الإشارة',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    Expanded(
-                      child: CustomPaint(
-                        painter: SignalPainter(
-                          values: signalHistory,
-                        ),
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // تحليل الهدف
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1424),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '🔬 تحليل الهدف',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 5),
-
-                    Text(
-                      selectedTargets.isEmpty
-                          ? 'لم يتم اختيار هدف'
-                          : 'الأهداف المحددة: ${selectedTargets.join('، ')}',
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    if (selectedTargets.isNotEmpty)
-                      ...selectedTargets.map(
-                        (target) {
-                          final score = targetScore(target);
-
-                          return Padding(
-                            padding:
-                                const EdgeInsets.only(bottom: 12),
-                            child: Column(
-                              children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      target,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${score.toStringAsFixed(0)}%',
-                                      style: TextStyle(
-                                        color: scoreColor(score),
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                const SizedBox(height: 6),
-
-                                ClipRRect(
-                                  borderRadius:
-                                      BorderRadius.circular(8),
-                                  child: LinearProgressIndicator(
-                                    value: score / 100,
-                                    minHeight: 10,
-                                    backgroundColor:
-                                        Colors.white.withOpacity(0.08),
-                                    valueColor:
-                                        AlwaysStoppedAnimation<Color>(
-                                      scoreColor(score),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-
-                    if (selectedTargets.isEmpty)
-                      const Center(
-                        child: Text(
-                          'اختر هدفًا للبدء بالتحليل',
-                          style: TextStyle(
-                            color: Colors.white38,
-                          ),
-                        ),
-                      ),
-
-                    const SizedBox(height: 5),
-
-                    const Text(
-                      '⚠️ التحليل الحالي تجريبي. سيتم ربطه بالبيانات الحقيقية للحساس بعد توصيل ESP32 وإجراء الاختبارات.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white30,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // أزرار التشغيل
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed:
-                          scanning ? null : startTest,
-                      icon: const Icon(
-                        Icons.play_arrow,
-                      ),
-                      label: const Text(
-                        'بدء المسح',
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          scanning ? stopTest : null,
-                      icon: const Icon(
-                        Icons.stop,
-                      ),
-                      label: const Text(
-                        'إيقاف',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-
-              Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: scanning
-                          ? Colors.greenAccent
-                          : Colors.white30,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    scanning
-                        ? 'المسح يعمل'
-                        : 'الجهاز جاهز',
-                    style: const TextStyle(
-                      color: Colors.white60,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   double targetScore(String target) {
-    if (signal <= 0) return 0;
+    if (!scanning && signal == 0) return 0;
 
-    // أرقام تجريبية فقط.
-    // لاحقًا سيتم استبدالها بخوارزمية تعتمد على
-    // البيانات الحقيقية القادمة من ESP32.
     final factors = {
       'ذهب': 0.92,
-      'معدن': 0.78,
-      'فضة': 0.84,
       'نحاس': 0.72,
-      'ألماس': 0.30,
+      'فضة': 0.84,
+      'حديد': 0.38,
       'ماء': 0.58,
     };
 
@@ -661,13 +121,1039 @@ class _ScanScreenState extends State<ScanScreen> {
         .toDouble();
   }
 
-  Color scoreColor(double value) {
-    if (value < 25) return Colors.redAccent;
-    if (value < 50) return Colors.deepOrangeAccent;
-    if (value < 75) return Colors.amberAccent;
-    return Colors.greenAccent;
+  Color targetColor(String target) {
+    switch (target) {
+      case 'ذهب':
+        return Colors.amberAccent;
+      case 'نحاس':
+        return Colors.orangeAccent;
+      case 'فضة':
+        return Colors.lightBlueAccent;
+      case 'حديد':
+        return Colors.redAccent;
+      case 'ماء':
+        return Colors.cyanAccent;
+      default:
+        return Colors.white;
+    }
+  }
+
+  IconData targetIcon(String target) {
+    switch (target) {
+      case 'ذهب':
+        return Icons.diamond;
+      case 'نحاس':
+        return Icons.hexagon;
+      case 'فضة':
+        return Icons.circle;
+      case 'حديد':
+        return Icons.landscape;
+      case 'ماء':
+        return Icons.water_drop;
+      default:
+        return Icons.help;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = signalColor;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF050B16),
+
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF050B16),
+        elevation: 0,
+
+        leading: IconButton(
+          icon: const Icon(
+            Icons.menu,
+            size: 30,
+            color: Colors.white,
+          ),
+          onPressed: () {},
+        ),
+
+        centerTitle: true,
+
+        title: Column(
+          children: [
+            const Text(
+              'GeoScan AI',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              'المسح المباشر',
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.white.withOpacity(0.7),
+              ),
+            ),
+          ],
+        ),
+
+        actions: [
+          Row(
+            children: [
+              const Icon(
+                Icons.bluetooth,
+                color: Colors.cyanAccent,
+                size: 28,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                'متصل',
+                style: TextStyle(
+                  color: scanning
+                      ? Colors.greenAccent
+                      : Colors.greenAccent,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.more_vert,
+              color: Colors.white,
+            ),
+            onPressed: () {},
+          ),
+        ],
+      ),
+
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            14,
+            8,
+            14,
+            30,
+          ),
+          child: Column(
+            children: [
+
+              // =========================
+              // العداد الرئيسي
+              // =========================
+
+              SizedBox(
+                height: 300,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: GaugePainter(
+                          value: signal,
+                        ),
+                      ),
+                    ),
+
+                    Positioned(
+                      top: 110,
+                      child: Column(
+                        children: [
+                          const Text(
+                            'LIVE SCAN',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
+                            ),
+                          ),
+
+                          const SizedBox(height: 4),
+
+                          Text(
+                            '${signal.toStringAsFixed(1)}%',
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 58,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+
+                          Text(
+                            signalText,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // =========================
+              // معلومات جانبية
+              // =========================
+
+              Row(
+                children: [
+
+                  Expanded(
+                    child: _infoCard(
+                      title: 'شدة الإشارة',
+                      value:
+                          '${signal.toStringAsFixed(1)}%',
+                      subtitle: signalText,
+                      icon: Icons.signal_cellular_alt,
+                      color: color,
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: Column(
+                      children: [
+
+                        _smallInfoCard(
+                          title: 'العمق التقريبي',
+                          value:
+                              '${depth.toStringAsFixed(2)} m',
+                          icon: Icons.gps_fixed,
+                          color: Colors.greenAccent,
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        _smallInfoCard(
+                          title: 'استقرار الإشارة',
+                          value:
+                              '${stability.toStringAsFixed(0)}%',
+                          icon: Icons.graphic_eq,
+                          color: Colors.greenAccent,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              // =========================
+              // شريط الإشارة
+              // =========================
+
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF07111F),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                ),
+                child: Column(
+                  children: [
+
+                    SizedBox(
+                      height: 28,
+                      child: Row(
+                        children: List.generate(
+                          40,
+                          (index) {
+                            final level =
+                                ((index + 1) / 40) * 100;
+
+                            final active =
+                                signal >= level;
+
+                            Color barColor;
+
+                            if (index < 10) {
+                              barColor =
+                                  Colors.redAccent;
+                            } else if (index < 20) {
+                              barColor =
+                                  Colors.orangeAccent;
+                            } else if (index < 30) {
+                              barColor =
+                                  Colors.amberAccent;
+                            } else {
+                              barColor =
+                                  Colors.greenAccent;
+                            }
+
+                            return Expanded(
+                              child: AnimatedContainer(
+                                duration:
+                                    const Duration(
+                                  milliseconds: 180,
+                                ),
+                                margin:
+                                    const EdgeInsets.symmetric(
+                                  horizontal: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: active
+                                      ? barColor
+                                      : Colors.white
+                                          .withOpacity(0.08),
+                                  borderRadius:
+                                      BorderRadius.circular(3),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 5),
+
+                    Row(
+                      mainAxisAlignment:
+                          MainAxisAlignment.spaceBetween,
+                      children: const [
+                        Text(
+                          'ضعيفة',
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                        Text(
+                          'متوسطة',
+                          style: TextStyle(
+                            color: Colors.amberAccent,
+                          ),
+                        ),
+                        Text(
+                          'قوية',
+                          style: TextStyle(
+                            color: Colors.greenAccent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // =========================
+              // الرسم البياني
+              // =========================
+
+              _sectionCard(
+                title: 'حركة الإشارة',
+                icon: Icons.show_chart,
+                height: 250,
+                child: CustomPaint(
+                  painter: SignalPainter(
+                    values: signalHistory,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // =========================
+              // تحليل الهدف
+              // =========================
+
+              _sectionCard(
+                title: 'تحليل الهدف',
+                icon: Icons.track_changes,
+                child: Column(
+                  children: targets.map(
+                    (target) {
+
+                      final score =
+                          targetScore(target);
+
+                      final targetColorValue =
+                          targetColor(target);
+
+                      return Padding(
+                        padding:
+                            const EdgeInsets.only(
+                          bottom: 12,
+                        ),
+                        child: Row(
+                          children: [
+
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: targetColorValue
+                                    .withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                targetIcon(target),
+                                color:
+                                    targetColorValue,
+                              ),
+                            ),
+
+                            const SizedBox(width: 10),
+
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment
+                                            .spaceBetween,
+                                    children: [
+
+                                      Text(
+                                        target,
+                                        style:
+                                            const TextStyle(
+                                          color:
+                                              Colors.white,
+                                          fontSize: 15,
+                                          fontWeight:
+                                              FontWeight.bold,
+                                        ),
+                                      ),
+
+                                      Text(
+                                        '${score.toStringAsFixed(0)}%',
+                                        style: TextStyle(
+                                          color:
+                                              targetColorValue,
+                                          fontWeight:
+                                              FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  const SizedBox(height: 6),
+
+                                  ClipRRect(
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                      8,
+                                    ),
+                                    child:
+                                        LinearProgressIndicator(
+                                      value:
+                                          score / 100,
+                                      minHeight: 8,
+                                      backgroundColor:
+                                          Colors.white
+                                              .withOpacity(
+                                        0.08,
+                                      ),
+                                      valueColor:
+                                          AlwaysStoppedAnimation<
+                                              Color>(
+                                        targetColorValue,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ).toList(),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // =========================
+              // الهدف المحتمل
+              // =========================
+
+              _sectionCard(
+                title: 'نوع الهدف المحتمل',
+                icon: Icons.search,
+                child: Column(
+                  children: [
+
+                    Text(
+                      signal >= 70
+                          ? 'إشارة قوية — هدف محتمل'
+                          : signal >= 40
+                              ? 'إشارة متوسطة — يحتاج إلى اختبار'
+                              : 'لا توجد إشارة قوية',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    Text(
+                      signal >= 70
+                          ? '${signal.toStringAsFixed(0)}% ثقة تجريبية'
+                          : 'استمر بالمسح للحصول على بيانات أكثر',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    const Text(
+                      'هذه النتيجة تجريبية حاليًا وليست كشفًا حقيقيًا لنوع المعدن أو العمق.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white30,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // =========================
+              // معلومات الجهاز
+              // =========================
+
+              Row(
+                children: [
+
+                  Expanded(
+                    child: _statusCard(
+                      icon: Icons.graphic_eq,
+                      title: 'حالة الجهاز',
+                      value: 'مستقر',
+                      color: Colors.greenAccent,
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  Expanded(
+                    child: _statusCard(
+                      icon: Icons.gps_fixed,
+                      title: 'الحساسية',
+                      value:
+                          '${sensitivity.toStringAsFixed(0)}%',
+                      color: Colors.greenAccent,
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  Expanded(
+                    child: _statusCard(
+                      icon: Icons.filter_alt,
+                      title: 'الفلترة',
+                      value: filter,
+                      color: Colors.cyanAccent,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              Row(
+                children: [
+
+                  Expanded(
+                    child: _statusCard(
+                      icon: Icons.volume_up,
+                      title: 'التنبيه الصوتي',
+                      value: scanning
+                          ? 'يعمل'
+                          : 'جاهز',
+                      color: Colors.greenAccent,
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  Expanded(
+                    child: _statusCard(
+                      icon: Icons.vibration,
+                      title: 'الاهتزاز',
+                      value: 'يعمل',
+                      color: Colors.greenAccent,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 18),
+
+              // =========================
+              // أزرار التشغيل
+              // =========================
+
+              Row(
+                children: [
+
+                  Expanded(
+                    child: SizedBox(
+                      height: 58,
+                      child: FilledButton.icon(
+                        onPressed:
+                            scanning ? null : startScan,
+                        icon: const Icon(
+                          Icons.play_arrow,
+                          size: 28,
+                        ),
+                        label: const Text(
+                          'بدء المسح',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor:
+                              Colors.greenAccent
+                                  .withOpacity(0.12),
+                          foregroundColor:
+                              Colors.greenAccent,
+                          side: const BorderSide(
+                            color: Colors.greenAccent,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: SizedBox(
+                      height: 58,
+                      child: OutlinedButton.icon(
+                        onPressed:
+                            scanning ? stopScan : null,
+                        icon: const Icon(
+                          Icons.stop,
+                          size: 24,
+                        ),
+                        label: const Text(
+                          'إيقاف المسح',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor:
+                              Colors.redAccent,
+                          side: const BorderSide(
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 18),
+
+              // =========================
+              // تنبيه
+              // =========================
+
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Colors.amber.withOpacity(0.15),
+                  ),
+                ),
+                child: const Text(
+                  'تنبيه: البيانات الحالية تجريبية. بعد توصيل دائرة ESP32 والحساس سيتم استبدالها بالبيانات الحقيقية.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =====================================================
+  // Widgets
+  // =====================================================
+
+  Widget _infoCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07111F),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+
+          Icon(
+            icon,
+            color: color,
+            size: 28,
+          ),
+
+          const SizedBox(height: 5),
+
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+            ),
+          ),
+
+          const SizedBox(height: 4),
+
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 25,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _smallInfoCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07111F),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Row(
+        children: [
+
+          Icon(
+            icon,
+            color: color,
+            size: 25,
+          ),
+
+          const SizedBox(width: 8),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 11,
+                  ),
+                ),
+
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 19,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+    double? height,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: height,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07111F),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.08),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+
+          Row(
+            children: [
+
+              Icon(
+                icon,
+                color: Colors.cyanAccent,
+              ),
+
+              const SizedBox(width: 8),
+
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          Expanded(
+            child: child,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        vertical: 12,
+        horizontal: 6,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07111F),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.08),
+        ),
+      ),
+      child: Column(
+        children: [
+
+          Icon(
+            icon,
+            color: color,
+            size: 25,
+          ),
+
+          const SizedBox(height: 5),
+
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+            ),
+          ),
+
+          const SizedBox(height: 2),
+
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
+
+// =======================================================
+// Gauge
+// =======================================================
+
+class GaugePainter extends CustomPainter {
+  final double value;
+
+  GaugePainter({
+    required this.value,
+  });
+
+  @override
+  void paint(
+    Canvas canvas,
+    Size size,
+  ) {
+    final center = Offset(
+      size.width / 2,
+      size.height * 0.78,
+    );
+
+    final radius =
+        math.min(size.width * 0.43, size.height * 0.62);
+
+    const startAngle = math.pi * 1.05;
+    const sweepAngle = math.pi * 0.90;
+
+    final segments = 42;
+
+    for (int i = 0; i < segments; i++) {
+      final progress = i / segments;
+
+      final angle =
+          startAngle + sweepAngle * progress;
+
+      Color color;
+
+      if (progress < 0.25) {
+        color = Colors.redAccent;
+      } else if (progress < 0.5) {
+        color = Colors.orangeAccent;
+      } else if (progress < 0.75) {
+        color = Colors.amberAccent;
+      } else {
+        color = Colors.greenAccent;
+      }
+
+      final active =
+          value >= progress * 100;
+
+      final paint = Paint()
+        ..color = active
+            ? color
+            : Colors.white.withOpacity(0.08)
+        ..strokeWidth = 17
+        ..strokeCap = StrokeCap.square;
+
+      final inner = Offset(
+        center.dx + math.cos(angle) * radius,
+        center.dy + math.sin(angle) * radius,
+      );
+
+      final outer = Offset(
+        center.dx + math.cos(angle) * (radius + 8),
+        center.dy + math.sin(angle) * (radius + 8),
+      );
+
+      canvas.drawLine(
+        inner,
+        outer,
+        paint,
+      );
+    }
+
+    // المؤشر
+    final pointerValue =
+        value.clamp(0, 100) / 100;
+
+    final pointerAngle =
+        startAngle + sweepAngle * pointerValue;
+
+    final pointerEnd = Offset(
+      center.dx +
+          math.cos(pointerAngle) *
+              (radius - 12),
+      center.dy +
+          math.sin(pointerAngle) *
+              (radius - 12),
+    );
+
+    final pointerPaint = Paint()
+      ..color = value < 25
+          ? Colors.redAccent
+          : value < 50
+              ? Colors.orangeAccent
+              : value < 75
+                  ? Colors.amberAccent
+                  : Colors.greenAccent
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(
+      center,
+      pointerEnd,
+      pointerPaint,
+    );
+
+    canvas.drawCircle(
+      center,
+      9,
+      Paint()..color = pointerPaint.color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant GaugePainter oldDelegate,
+  ) {
+    return oldDelegate.value != value;
+  }
+}
+
+// =======================================================
+// Signal Chart
+// =======================================================
 
 class SignalPainter extends CustomPainter {
   final List<double> values;
@@ -681,17 +1167,12 @@ class SignalPainter extends CustomPainter {
     Canvas canvas,
     Size size,
   ) {
-    if (values.length < 2) {
-      return;
-    }
-
-    // شبكة خلفية
     final gridPaint = Paint()
       ..color = Colors.white.withOpacity(0.06)
       ..strokeWidth = 1;
 
-    for (int i = 1; i < 5; i++) {
-      final y = size.height * i / 5;
+    for (int i = 0; i <= 4; i++) {
+      final y = size.height * i / 4;
 
       canvas.drawLine(
         Offset(0, y),
@@ -700,27 +1181,20 @@ class SignalPainter extends CustomPainter {
       );
     }
 
-    // الخط الرئيسي
-    final paint = Paint()
-      ..color = Colors.cyanAccent
-      ..strokeWidth = 5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+    if (values.length < 2) return;
 
     final path = Path();
 
-    final count = values.length;
-
-    for (int i = 0; i < count; i++) {
-      final x = i * size.width / (count - 1);
+    for (int i = 0; i < values.length; i++) {
+      final x =
+          i * size.width / (values.length - 1);
 
       final normalized =
-          (values[i].clamp(0.0, 100.0) / 100.0)
-              .toDouble();
+          values[i].clamp(0, 100) / 100;
 
       final y =
-          size.height - normalized * size.height;
+          size.height -
+              normalized * size.height;
 
       if (i == 0) {
         path.moveTo(x, y);
@@ -729,7 +1203,17 @@ class SignalPainter extends CustomPainter {
       }
     }
 
-    canvas.drawPath(path, paint);
+    final paint = Paint()
+      ..color = Colors.cyanAccent
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawPath(
+      path,
+      paint,
+    );
   }
 
   @override
