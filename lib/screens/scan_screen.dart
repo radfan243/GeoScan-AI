@@ -111,9 +111,10 @@ class _ScanScreenState extends State<ScanScreen> {
         incomingStability.clamp(0, 100).toDouble();
 
     final safeDepth =
-        incomingDepth < 0
+        (incomingDepth < 0
             ? 0
-            : incomingDepth;
+            : incomingDepth)
+        .toDouble();
 
     // ----------------------------------------------------------
     // تنعيم الإشارة
@@ -1554,12 +1555,6 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
 
           const SizedBox(height: 12),
-
-          // ======================================================
-          // الإصلاح فقط:
-          // Expanded يستخدم عندما يكون للبطاقة ارتفاع محدد.
-          // أما البطاقات بدون height فتستخدم child مباشرة.
-          // ======================================================
 
           if (height != null)
             Expanded(
