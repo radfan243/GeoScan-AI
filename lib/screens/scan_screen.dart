@@ -1,5 +1,6 @@
-import 'dart:math' as math;
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../services/bluetooth_service.dart';
@@ -20,84 +21,43 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<double> signalHistory = [];
 
   double signal = 0;
+  double rawSignal = 0;
   double stability = 0;
   double depth = 0;
   double sensitivity = 75;
 
   bool scanning = false;
   bool connected = false;
+  bool calibrating = false;
+  bool audioEnabled = true;
+  bool vibrationEnabled = true;
 
   String filter = 'متوسطة';
   String deviceStatus = 'غير متصل';
+  String targetType = 'غير محدد';
+
+  DateTime? _lastSignalTime;
 
   @override
   void initState() {
     super.initState();
 
-    // ==========================================================
-    // استقبال البيانات الحقيقية من ESP32
-    // ==========================================================
+    _listenToBluetooth();
+  }
 
-    _dataSubscription =
-        _bluetooth.dataStream.listen((data) {
-      if (!mounted) return;
+  // ============================================================
+  // الاستماع إلى Bluetooth والبيانات القادمة من ESP32
+  // ============================================================
 
-      setState(() {
-        if (data.containsKey('signal')) {
-          signal =
-              _toDouble(data['signal']);
-        }
-
-        if (data.containsKey('stability')) {
-          stability =
-              _toDouble(data['stability']);
-        }
-
-        if (data.containsKey('depth')) {
-          depth =
-              _toDouble(data['depth']);
-        }
-
-        if (data.containsKey('status')) {
-          deviceStatus =
-              data['status'].toString();
-        }
-
-        signalHistory.add(signal);
-
-        if (signalHistory.length > 60) {
-          signalHistory.removeAt(0);
-        }
-
-        scanning =
-            deviceStatus == 'يمسح' ||
-            deviceStatus == 'SCANNING';
-      });
-    });
-
-    // ==========================================================
-    // مراقبة اتصال Bluetooth
-    // ==========================================================
+  void _listenToBluetooth() {
+    _dataSubscription = _bluetooth.dataStream.listen(
+      _handleDeviceData,
+    );
 
     _connectionSubscription =
         _bluetooth.connectionStream.listen(
-      (isConnected) {
-        if (!mounted) return;
-
-        setState(() {
-          connected = isConnected;
-
-          if (!connected) {
-            scanning = false;
-            deviceStatus = 'غير متصل';
-          }
-        });
-      },
+      _handleConnectionState,
     );
-
-    // ==========================================================
-    // إذا كان الاتصال موجودًا مسبقًا
-    // ==========================================================
 
     connected = _bluetooth.isConnected;
 
@@ -106,33 +66,163 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  // ============================================================
+  // معالجة بيانات ESP32
+  // ============================================================
+
+  void _handleDeviceData(
+    Map<String, dynamic> data,
+  ) {
+    if (!mounted) return;
+
+    final incomingSignal =
+        data.containsKey('signal')
+            ? _toDouble(data['signal'])
+            : signal;
+
+    final incomingStability =
+        data.containsKey('stability')
+            ? _toDouble(data['stability'])
+            : stability;
+
+    final incomingDepth =
+        data.containsKey('depth')
+            ? _toDouble(data['depth'])
+            : depth;
+
+    final incomingStatus =
+        data.containsKey('status')
+            ? data['status'].toString()
+            : deviceStatus;
+
+    final incomingTarget =
+        data.containsKey('target')
+            ? data['target'].toString()
+            : targetType;
+
+    // ----------------------------------------------------------
+    // حماية القيم
+    // ----------------------------------------------------------
+
+    final safeRawSignal =
+        incomingSignal.clamp(0, 100).toDouble();
+
+    final safeStability =
+        incomingStability.clamp(0, 100).toDouble();
+
+    final safeDepth =
+        incomingDepth < 0
+            ? 0
+            : incomingDepth;
+
+    // ----------------------------------------------------------
+    // تنعيم الإشارة
+    // ----------------------------------------------------------
+
+    rawSignal = safeRawSignal;
+
+    final smoothedSignal =
+        signal == 0
+            ? safeRawSignal
+            : (signal * 0.72) +
+                (safeRawSignal * 0.28);
+
+    final safeSignal =
+        smoothedSignal.clamp(0, 100).toDouble();
+
+    final now = DateTime.now();
+
+    // ----------------------------------------------------------
+    // تحديد حالة المسح
+    // ----------------------------------------------------------
+
+    final statusLower =
+        incomingStatus.toLowerCase();
+
+    final isScanning =
+        incomingStatus == 'يمسح' ||
+        incomingStatus == 'SCANNING' ||
+        statusLower == 'scanning' ||
+        statusLower == 'scan';
+
+    setState(() {
+      signal = safeSignal;
+      stability = safeStability;
+      depth = safeDepth;
+      deviceStatus = incomingStatus;
+      targetType = incomingTarget;
+
+      scanning = isScanning;
+
+      signalHistory.add(safeSignal);
+
+      if (signalHistory.length > 80) {
+        signalHistory.removeAt(0);
+      }
+
+      _lastSignalTime = now;
+    });
+  }
+
+  // ============================================================
+  // حالة الاتصال
+  // ============================================================
+
+  void _handleConnectionState(
+    bool isConnected,
+  ) {
+    if (!mounted) return;
+
+    setState(() {
+      connected = isConnected;
+
+      if (!connected) {
+        scanning = false;
+        calibrating = false;
+        deviceStatus = 'غير متصل';
+
+        signal = 0;
+        rawSignal = 0;
+        stability = 0;
+        depth = 0;
+
+        signalHistory.clear();
+      } else {
+        deviceStatus = 'متصل';
+      }
+    });
+  }
+
+  // ============================================================
+  // تحويل البيانات إلى double
+  // ============================================================
+
   double _toDouble(dynamic value) {
     if (value is num) {
       return value.toDouble();
     }
 
     return double.tryParse(
-          value.toString(),
+          value.toString().replaceAll(',', '.'),
         ) ??
         0;
   }
 
-  @override
-  void dispose() {
-    _dataSubscription?.cancel();
-    _connectionSubscription?.cancel();
-
-    super.dispose();
-  }
-
-  // ==========================================================
+  // ============================================================
   // بدء المسح الحقيقي
-  // ==========================================================
+  // ============================================================
 
   Future<void> startScan() async {
     if (!connected) {
       _showMessage(
         'يجب الاتصال بجهاز ESP32 أولًا',
+      );
+      return;
+    }
+
+    if (calibrating) {
+      _showMessage(
+        'انتظر حتى تنتهي المعايرة',
       );
       return;
     }
@@ -145,6 +235,7 @@ class _ScanScreenState extends State<ScanScreen> {
       setState(() {
         scanning = true;
         deviceStatus = 'يمسح';
+        signalHistory.clear();
       });
     } catch (e) {
       _showMessage(
@@ -153,9 +244,9 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  // ==========================================================
-  // إيقاف المسح الحقيقي
-  // ==========================================================
+  // ============================================================
+  // إيقاف المسح
+  // ============================================================
 
   Future<void> stopScan() async {
     if (!connected) return;
@@ -167,6 +258,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
       setState(() {
         scanning = false;
+        deviceStatus = 'متوقف';
       });
     } catch (e) {
       _showMessage(
@@ -175,9 +267,9 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  // ==========================================================
+  // ============================================================
   // المعايرة
-  // ==========================================================
+  // ============================================================
 
   Future<void> calibrate() async {
     if (!connected) {
@@ -187,88 +279,247 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
 
+    if (scanning) {
+      _showMessage(
+        'أوقف المسح أولًا ثم قم بالمعايرة',
+      );
+      return;
+    }
+
     try {
+      setState(() {
+        calibrating = true;
+        deviceStatus = 'معايرة';
+        signalHistory.clear();
+        signal = 0;
+        rawSignal = 0;
+        depth = 0;
+      });
+
       await _bluetooth.calibrate();
 
       if (!mounted) return;
 
       setState(() {
-        signal = 0;
+        calibrating = false;
         stability = 100;
-        depth = 0;
-        signalHistory.clear();
-        deviceStatus = 'معايرة';
+        deviceStatus = 'جاهز';
       });
+
+      _showMessage(
+        'تم إرسال أمر المعايرة إلى ESP32',
+      );
     } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        calibrating = false;
+      });
+
       _showMessage(
         'تعذر تنفيذ المعايرة',
       );
     }
   }
 
-  // ==========================================================
+  // ============================================================
   // تغيير الحساسية
-  // ==========================================================
+  // ============================================================
 
   Future<void> changeSensitivity(
     double value,
   ) async {
     if (!connected) return;
 
+    final safeValue =
+        value.clamp(0, 100).toDouble();
+
     try {
       await _bluetooth.setSensitivity(
+        safeValue,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        sensitivity = safeValue;
+      });
+    } catch (_) {
+      _showMessage(
+        'تعذر تغيير الحساسية',
+      );
+    }
+  }
+
+  // ============================================================
+  // تغيير الفلترة
+  // ============================================================
+
+  Future<void> changeFilter(
+    String value,
+  ) async {
+    if (!connected) return;
+
+    try {
+      await _bluetooth.setFilter(
         value,
       );
 
       if (!mounted) return;
 
       setState(() {
-        sensitivity = value;
+        filter = value;
       });
-    } catch (_) {}
+    } catch (_) {
+      _showMessage(
+        'تعذر تغيير الفلترة',
+      );
+    }
   }
 
-  // ==========================================================
+  // ============================================================
+  // الصوت
+  // ============================================================
+
+  Future<void> toggleAudio() async {
+    if (!connected) return;
+
+    final newValue = !audioEnabled;
+
+    try {
+      await _bluetooth.setAudio(
+        newValue,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        audioEnabled = newValue;
+      });
+    } catch (_) {
+      _showMessage(
+        'تعذر تغيير الصوت',
+      );
+    }
+  }
+
+  // ============================================================
+  // الاهتزاز
+  // ============================================================
+
+  Future<void> toggleVibration() async {
+    if (!connected) return;
+
+    final newValue = !vibrationEnabled;
+
+    try {
+      await _bluetooth.setVibration(
+        newValue,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        vibrationEnabled = newValue;
+      });
+    } catch (_) {
+      _showMessage(
+        'تعذر تغيير الاهتزاز',
+      );
+    }
+  }
+
+  // ============================================================
   // لون الإشارة
-  // ==========================================================
+  // ============================================================
 
   Color get signalColor {
-    if (signal < 25) {
+    if (signal < 20) {
       return Colors.redAccent;
     }
 
-    if (signal < 50) {
+    if (signal < 40) {
       return Colors.orangeAccent;
     }
 
-    if (signal < 75) {
+    if (signal < 65) {
       return Colors.amberAccent;
     }
 
     return Colors.greenAccent;
   }
 
+  // ============================================================
+  // نص الإشارة
+  // ============================================================
+
   String get signalText {
-    if (signal < 25) {
+    if (!connected) {
+      return 'غير متصل';
+    }
+
+    if (calibrating) {
+      return 'جاري المعايرة';
+    }
+
+    if (!scanning) {
+      return 'جاهز للمسح';
+    }
+
+    if (signal < 20) {
       return 'إشارة ضعيفة';
     }
 
-    if (signal < 50) {
+    if (signal < 40) {
       return 'إشارة متوسطة';
     }
 
-    if (signal < 75) {
+    if (signal < 65) {
       return 'إشارة جيدة';
     }
 
-    return 'إشارة قوية';
+    if (signal < 85) {
+      return 'إشارة قوية';
+    }
+
+    return 'إشارة قوية جدًا';
   }
 
-  // ==========================================================
-  // رسالة
-  // ==========================================================
+  // ============================================================
+  // تقييم الهدف
+  // ============================================================
 
-  void _showMessage(String message) {
+  String get targetStatus {
+    if (!connected) {
+      return 'لا توجد قراءة';
+    }
+
+    if (!scanning) {
+      return 'في انتظار المسح';
+    }
+
+    if (signal < 20) {
+      return 'لا توجد إشارة واضحة';
+    }
+
+    if (signal < 40) {
+      return 'تغير ضعيف';
+    }
+
+    if (signal < 65) {
+      return 'تغير يحتاج إلى فحص';
+    }
+
+    return 'تغير قوي - تحقق ميدانيًا';
+  }
+
+  // ============================================================
+  // رسالة
+  // ============================================================
+
+  void _showMessage(
+    String message,
+  ) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -282,16 +533,29 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   @override
+  void dispose() {
+    _dataSubscription?.cancel();
+    _connectionSubscription?.cancel();
+
+    super.dispose();
+  }
+
+  // ============================================================
+  // الواجهة
+  // ============================================================
+
+  @override
   Widget build(BuildContext context) {
     final color = signalColor;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF050B16),
+      backgroundColor:
+          const Color(0xFF050B16),
 
       appBar: AppBar(
-        backgroundColor: const Color(0xFF050B16),
+        backgroundColor:
+            const Color(0xFF050B16),
         elevation: 0,
-
         centerTitle: true,
 
         title: Column(
@@ -299,16 +563,16 @@ class _ScanScreenState extends State<ScanScreen> {
             const Text(
               'GeoScan AI',
               style: TextStyle(
+                color: Colors.white,
                 fontSize: 23,
                 fontWeight: FontWeight.bold,
-                color: Colors.white,
               ),
             ),
             Text(
-              'المسح المباشر',
+              'نظام المسح الذكي',
               style: TextStyle(
-                fontSize: 14,
-                color: Colors.white.withOpacity(0.7),
+                color: Colors.white.withOpacity(0.65),
+                fontSize: 13,
               ),
             ),
           ],
@@ -316,17 +580,17 @@ class _ScanScreenState extends State<ScanScreen> {
 
         actions: [
           Padding(
-            padding: const EdgeInsets.only(
-              right: 10,
-            ),
+            padding:
+                const EdgeInsets.only(right: 10),
             child: Row(
               children: [
                 Icon(
-                  Icons.bluetooth,
+                  connected
+                      ? Icons.bluetooth_connected
+                      : Icons.bluetooth_disabled,
                   color: connected
                       ? Colors.greenAccent
                       : Colors.redAccent,
-                  size: 26,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -337,8 +601,9 @@ class _ScanScreenState extends State<ScanScreen> {
                     color: connected
                         ? Colors.greenAccent
                         : Colors.redAccent,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    fontWeight:
+                        FontWeight.bold,
                   ),
                 ),
               ],
@@ -349,7 +614,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
+          padding:
+              const EdgeInsets.fromLTRB(
             14,
             8,
             14,
@@ -359,57 +625,72 @@ class _ScanScreenState extends State<ScanScreen> {
             children: [
 
               // ==================================================
-              // العداد الرئيسي
+              // المؤشر الرئيسي
               // ==================================================
 
-              SizedBox(
-                height: 300,
+              Container(
+                height: 315,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color:
+                      const Color(0xFF07111F),
+                  borderRadius:
+                      BorderRadius.circular(24),
+                  border: Border.all(
+                    color:
+                        color.withOpacity(0.22),
+                  ),
+                ),
                 child: Stack(
-                  alignment: Alignment.center,
+                  alignment:
+                      Alignment.center,
                   children: [
                     Positioned.fill(
                       child: CustomPaint(
-                        painter: GaugePainter(
+                        painter:
+                            GaugePainter(
                           value: signal,
                         ),
                       ),
                     ),
 
                     Positioned(
-                      top: 105,
+                      top: 115,
                       child: Column(
                         children: [
                           const Text(
                             'LIVE SCAN',
                             style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 23,
-                              fontWeight: FontWeight.bold,
+                              color:
+                                  Colors.white,
+                              fontSize: 21,
+                              fontWeight:
+                                  FontWeight.bold,
                               letterSpacing: 2,
                             ),
                           ),
 
-                          const SizedBox(height: 4),
+                          const SizedBox(
+                            height: 5,
+                          ),
 
                           Text(
                             '${signal.toStringAsFixed(1)}%',
                             style: TextStyle(
                               color: color,
-                              fontSize: 56,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 54,
+                              fontWeight:
+                                  FontWeight.bold,
                             ),
                           ),
 
                           Text(
-                            connected
-                                ? signalText
-                                : 'غير متصل',
+                            signalText,
                             style: TextStyle(
-                              color: connected
-                                  ? color
-                                  : Colors.redAccent,
+                              color: color,
                               fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                              fontWeight:
+                                  FontWeight.bold,
                             ),
                           ),
                         ],
@@ -419,6 +700,70 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
               ),
 
+              const SizedBox(height: 12),
+
+              // ==================================================
+              // حالة الهدف
+              // ==================================================
+
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color:
+                      color.withOpacity(0.06),
+                  borderRadius:
+                      BorderRadius.circular(18),
+                  border: Border.all(
+                    color:
+                        color.withOpacity(0.18),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      signal >= 65
+                          ? Icons.warning_amber
+                          : Icons.radar,
+                      color: color,
+                      size: 32,
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'تحليل الإشارة',
+                            style: TextStyle(
+                              color:
+                                  Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            targetStatus,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 16,
+                              fontWeight:
+                                  FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
               // ==================================================
               // المعلومات
               // ==================================================
@@ -427,10 +772,11 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   Expanded(
                     child: _infoCard(
-                      title: 'شدة الإشارة',
+                      title: 'الإشارة',
                       value:
                           '${signal.toStringAsFixed(1)}%',
-                      subtitle: signalText,
+                      subtitle:
+                          signalText,
                       icon:
                           Icons.signal_cellular_alt,
                       color: color,
@@ -444,12 +790,11 @@ class _ScanScreenState extends State<ScanScreen> {
                       children: [
                         _smallInfoCard(
                           title: 'العمق',
-                          value:
-                              depth > 0
-                                  ? '${depth.toStringAsFixed(2)} m'
-                                  : '--',
+                          value: depth > 0
+                              ? '${depth.toStringAsFixed(2)} m'
+                              : '--',
                           icon:
-                              Icons.gps_fixed,
+                              Icons.vertical_align_bottom,
                           color:
                               Colors.greenAccent,
                         ),
@@ -463,7 +808,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           icon:
                               Icons.graphic_eq,
                           color:
-                              Colors.greenAccent,
+                              Colors.cyanAccent,
                         ),
                       ],
                     ),
@@ -474,26 +819,16 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 14),
 
               // ==================================================
-              // عداد الشرائح
+              // مستوى الإشارة
               // ==================================================
 
-              Container(
-                padding:
-                    const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color:
-                      const Color(0xFF07111F),
-                  borderRadius:
-                      BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white
-                        .withOpacity(0.08),
-                  ),
-                ),
+              _sectionCard(
+                title: 'مستوى الإشارة',
+                icon: Icons.bar_chart,
                 child: Column(
                   children: [
                     SizedBox(
-                      height: 28,
+                      height: 30,
                       child: Row(
                         children:
                             List.generate(
@@ -509,15 +844,15 @@ class _ScanScreenState extends State<ScanScreen> {
 
                             Color barColor;
 
-                            if (index < 10) {
+                            if (index < 8) {
                               barColor =
                                   Colors.redAccent;
                             } else if (index <
-                                20) {
+                                18) {
                               barColor =
                                   Colors.orangeAccent;
                             } else if (index <
-                                30) {
+                                28) {
                               barColor =
                                   Colors.amberAccent;
                             } else {
@@ -531,7 +866,7 @@ class _ScanScreenState extends State<ScanScreen> {
                                 duration:
                                     const Duration(
                                   milliseconds:
-                                      120,
+                                      100,
                                 ),
                                 margin:
                                     const EdgeInsets
@@ -544,13 +879,11 @@ class _ScanScreenState extends State<ScanScreen> {
                                       ? barColor
                                       : Colors.white
                                           .withOpacity(
-                                          0.08,
+                                          0.07,
                                         ),
                                   borderRadius:
                                       BorderRadius
-                                          .circular(
-                                    3,
-                                  ),
+                                          .circular(3),
                                 ),
                               ),
                             );
@@ -559,7 +892,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     ),
 
-                    const SizedBox(height: 5),
+                    const SizedBox(height: 8),
 
                     const Row(
                       mainAxisAlignment:
@@ -596,16 +929,18 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 14),
 
               // ==================================================
-              // الرسم
+              // الرسم الحقيقي
               // ==================================================
 
               _sectionCard(
-                title: 'حركة الإشارة الحقيقية',
+                title: 'منحنى الإشارة',
                 icon: Icons.show_chart,
-                height: 240,
+                height: 250,
                 child: CustomPaint(
-                  painter: SignalPainter(
-                    values: signalHistory,
+                  painter:
+                      SignalPainter(
+                    values:
+                        signalHistory,
                   ),
                   child:
                       const SizedBox.expand(),
@@ -615,7 +950,7 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 14),
 
               // ==================================================
-              // حالة الجهاز
+              // حالة ESP32
               // ==================================================
 
               _sectionCard(
@@ -627,13 +962,13 @@ class _ScanScreenState extends State<ScanScreen> {
                       connected
                           ? Icons.bluetooth_connected
                           : Icons.bluetooth_disabled,
-                      size: 55,
+                      size: 58,
                       color: connected
                           ? Colors.greenAccent
                           : Colors.redAccent,
                     ),
 
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
 
                     Text(
                       connected
@@ -643,7 +978,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         color: connected
                             ? Colors.greenAccent
                             : Colors.redAccent,
-                        fontSize: 22,
+                        fontSize: 21,
                         fontWeight:
                             FontWeight.bold,
                       ),
@@ -653,12 +988,24 @@ class _ScanScreenState extends State<ScanScreen> {
 
                     Text(
                       connected
-                          ? 'البيانات تصل من ESP32 عبر Bluetooth'
-                          : 'اتصل بجهاز ESP32 أولًا',
+                          ? 'البيانات تصل مباشرة من ESP32'
+                          : 'اتصل بجهاز ESP32 للبدء',
                       textAlign:
                           TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white54,
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Text(
+                      'الهدف: $targetType',
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.white70,
+                        fontSize: 13,
                       ),
                     ),
                   ],
@@ -668,7 +1015,7 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 14),
 
               // ==================================================
-              // إعدادات
+              // الإعدادات
               // ==================================================
 
               _sectionCard(
@@ -689,7 +1036,8 @@ class _ScanScreenState extends State<ScanScreen> {
                         const Text(
                           'الحساسية',
                           style: TextStyle(
-                            color: Colors.white,
+                            color:
+                                Colors.white,
                             fontSize: 16,
                             fontWeight:
                                 FontWeight.bold,
@@ -700,7 +1048,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
                         Text(
                           '${sensitivity.toStringAsFixed(0)}%',
-                          style: const TextStyle(
+                          style:
+                              const TextStyle(
                             color:
                                 Colors.cyanAccent,
                             fontWeight:
@@ -717,12 +1066,14 @@ class _ScanScreenState extends State<ScanScreen> {
                       divisions: 100,
                       activeColor:
                           Colors.cyanAccent,
-                      onChanged: connected
-                          ? changeSensitivity
-                          : null,
+                      onChanged:
+                          connected &&
+                                  !calibrating
+                              ? changeSensitivity
+                              : null,
                     ),
 
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 5),
 
                     Row(
                       children: [
@@ -737,7 +1088,8 @@ class _ScanScreenState extends State<ScanScreen> {
                         const Text(
                           'الفلترة',
                           style: TextStyle(
-                            color: Colors.white,
+                            color:
+                                Colors.white,
                             fontSize: 16,
                             fontWeight:
                                 FontWeight.bold,
@@ -751,6 +1103,11 @@ class _ScanScreenState extends State<ScanScreen> {
                           dropdownColor:
                               const Color(
                             0xFF07111F,
+                          ),
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
                           ),
                           items: const [
                             DropdownMenuItem(
@@ -772,32 +1129,71 @@ class _ScanScreenState extends State<ScanScreen> {
                               ),
                             ),
                           ],
-                          onChanged: connected
-                              ? (value) async {
-                                  if (value ==
-                                      null) {
-                                    return;
-                                  }
-
-                                  try {
-                                    await _bluetooth
-                                        .setFilter(
-                                      value,
-                                    );
-
-                                    if (!mounted) {
-                                      return;
+                          onChanged:
+                              connected &&
+                                      !calibrating
+                                  ? (value) {
+                                      if (value !=
+                                          null) {
+                                        changeFilter(
+                                          value,
+                                        );
+                                      }
                                     }
-
-                                    setState(() {
-                                      filter =
-                                          value;
-                                    });
-                                  } catch (_) {}
-                                }
-                              : null,
+                                  : null,
                         ),
                       ],
+                    ),
+
+                    const Divider(
+                      color: Colors.white12,
+                    ),
+
+                    SwitchListTile(
+                      contentPadding:
+                          EdgeInsets.zero,
+                      title: const Text(
+                        'الصوت',
+                        style: TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                      ),
+                      secondary:
+                          const Icon(
+                        Icons.volume_up,
+                        color:
+                            Colors.cyanAccent,
+                      ),
+                      value: audioEnabled,
+                      onChanged: connected
+                          ? (_) =>
+                              toggleAudio()
+                          : null,
+                    ),
+
+                    SwitchListTile(
+                      contentPadding:
+                          EdgeInsets.zero,
+                      title: const Text(
+                        'الاهتزاز',
+                        style: TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                      ),
+                      secondary:
+                          const Icon(
+                        Icons.vibration,
+                        color:
+                            Colors.cyanAccent,
+                      ),
+                      value:
+                          vibrationEnabled,
+                      onChanged: connected
+                          ? (_) =>
+                              toggleVibration()
+                          : null,
                     ),
                   ],
                 ),
@@ -806,7 +1202,7 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 18),
 
               // ==================================================
-              // أزرار التحكم
+              // أزرار المسح
               // ==================================================
 
               Row(
@@ -814,15 +1210,17 @@ class _ScanScreenState extends State<ScanScreen> {
                   Expanded(
                     child: SizedBox(
                       height: 58,
-                      child: FilledButton.icon(
+                      child:
+                          FilledButton.icon(
                         onPressed:
                             scanning ||
-                                    !connected
+                                    !connected ||
+                                    calibrating
                                 ? null
                                 : startScan,
                         icon: const Icon(
-                          Icons.play_arrow,
-                          size: 28,
+                          Icons.radar,
+                          size: 26,
                         ),
                         label: const Text(
                           'بدء المسح',
@@ -856,7 +1254,8 @@ class _ScanScreenState extends State<ScanScreen> {
                   Expanded(
                     child: SizedBox(
                       height: 58,
-                      child: OutlinedButton.icon(
+                      child:
+                          OutlinedButton.icon(
                         onPressed:
                             scanning
                                 ? stopScan
@@ -866,7 +1265,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           size: 24,
                         ),
                         label: const Text(
-                          'إيقاف المسح',
+                          'إيقاف',
                           style: TextStyle(
                             fontSize: 17,
                             fontWeight:
@@ -892,23 +1291,37 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 12),
 
               // ==================================================
-              // معايرة
+              // المعايرة
               // ==================================================
 
               SizedBox(
                 width: double.infinity,
-                height: 52,
-                child: OutlinedButton.icon(
+                height: 54,
+                child:
+                    OutlinedButton.icon(
                   onPressed:
-                      connected && !scanning
+                      connected &&
+                              !scanning &&
+                              !calibrating
                           ? calibrate
                           : null,
-                  icon: const Icon(
-                    Icons.refresh,
-                  ),
-                  label: const Text(
-                    'معايرة الحساس',
-                    style: TextStyle(
+                  icon: calibrating
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.refresh,
+                        ),
+                  label: Text(
+                    calibrating
+                        ? 'جاري المعايرة...'
+                        : 'معايرة الحساس',
+                    style: const TextStyle(
                       fontSize: 16,
                       fontWeight:
                           FontWeight.bold,
@@ -920,12 +1333,13 @@ class _ScanScreenState extends State<ScanScreen> {
               const SizedBox(height: 18),
 
               // ==================================================
-              // تنبيه مهم
+              // تنبيه علمي
               // ==================================================
 
               Container(
+                width: double.infinity,
                 padding:
-                    const EdgeInsets.all(12),
+                    const EdgeInsets.all(13),
                 decoration: BoxDecoration(
                   color: Colors.amber
                       .withOpacity(0.05),
@@ -937,12 +1351,13 @@ class _ScanScreenState extends State<ScanScreen> {
                   ),
                 ),
                 child: const Text(
-                  'القراءة المعروضة تأتي من ESP32 عبر Bluetooth. دقة كشف المعدن والعمق تعتمد على دائرة الحساس والمعايرة والاختبارات الفعلية.',
+                  'مهم: التطبيق يعرض القياسات التي يرسلها ESP32. لا يتم اعتبار ارتفاع الإشارة ذهبًا أو معدنًا محددًا تلقائيًا. تحديد نوع الهدف والعمق الحقيقي يحتاج إلى دائرة الحساس والمعايرة والاختبارات الميدانية.',
                   textAlign:
                       TextAlign.center,
                   style: TextStyle(
                     color: Colors.white38,
                     fontSize: 11,
+                    height: 1.5,
                   ),
                 ),
               ),
@@ -953,9 +1368,9 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ==========================================================
-  // Info Card
-  // ==========================================================
+  // ============================================================
+  // بطاقة المعلومات الرئيسية
+  // ============================================================
 
   Widget _infoCard({
     required String title,
@@ -965,13 +1380,16 @@ class _ScanScreenState extends State<ScanScreen> {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding:
+          const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF07111F),
+        color:
+            const Color(0xFF07111F),
         borderRadius:
             BorderRadius.circular(18),
         border: Border.all(
-          color: color.withOpacity(0.3),
+          color:
+              color.withOpacity(0.25),
         ),
       ),
       child: Column(
@@ -986,7 +1404,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
           Text(
             title,
-            style: const TextStyle(
+            style:
+                const TextStyle(
               color: Colors.white70,
               fontSize: 13,
             ),
@@ -1016,9 +1435,9 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ==========================================================
-  // Small Info Card
-  // ==========================================================
+  // ============================================================
+  // بطاقة صغيرة
+  // ============================================================
 
   Widget _smallInfoCard({
     required String title,
@@ -1028,14 +1447,16 @@ class _ScanScreenState extends State<ScanScreen> {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding:
+          const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF07111F),
+        color:
+            const Color(0xFF07111F),
         borderRadius:
             BorderRadius.circular(16),
         border: Border.all(
-          color: Colors.white
-              .withOpacity(0.1),
+          color:
+              Colors.white.withOpacity(0.08),
         ),
       ),
       child: Row(
@@ -1080,9 +1501,9 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ==========================================================
-  // Section Card
-  // ==========================================================
+  // ============================================================
+  // بطاقة القسم
+  // ============================================================
 
   Widget _sectionCard({
     required String title,
@@ -1093,14 +1514,16 @@ class _ScanScreenState extends State<ScanScreen> {
     return Container(
       width: double.infinity,
       height: height,
-      padding: const EdgeInsets.all(14),
+      padding:
+          const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF07111F),
+        color:
+            const Color(0xFF07111F),
         borderRadius:
             BorderRadius.circular(20),
         border: Border.all(
-          color: Colors.white
-              .withOpacity(0.08),
+          color:
+              Colors.white.withOpacity(0.08),
         ),
       ),
       child: Column(
@@ -1162,7 +1585,7 @@ class GaugePainter extends CustomPainter {
       size.height * 0.78,
     );
 
-    final radius = 110.0;
+    const radius = 110.0;
 
     const startAngle =
         math.pi * 1.05;
@@ -1183,19 +1606,19 @@ class GaugePainter extends CustomPainter {
               sweepAngle *
                   progress;
 
-      Color color;
+      Color segmentColor;
 
-      if (progress < 0.25) {
-        color =
+      if (progress < 0.20) {
+        segmentColor =
             Colors.redAccent;
-      } else if (progress < 0.5) {
-        color =
+      } else if (progress < 0.45) {
+        segmentColor =
             Colors.orangeAccent;
-      } else if (progress < 0.75) {
-        color =
+      } else if (progress < 0.70) {
+        segmentColor =
             Colors.amberAccent;
       } else {
-        color =
+        segmentColor =
             Colors.greenAccent;
       }
 
@@ -1205,9 +1628,9 @@ class GaugePainter extends CustomPainter {
 
       final paint = Paint()
         ..color = active
-            ? color
+            ? segmentColor
             : Colors.white
-                .withOpacity(0.08)
+                .withOpacity(0.07)
         ..strokeWidth = 17
         ..strokeCap =
             StrokeCap.square;
@@ -1237,14 +1660,14 @@ class GaugePainter extends CustomPainter {
       );
     }
 
-    final pointerValue =
+    final normalized =
         value.clamp(0, 100) /
             100;
 
     final pointerAngle =
         startAngle +
             sweepAngle *
-                pointerValue;
+                normalized;
 
     final pointerEnd =
         Offset(
@@ -1256,15 +1679,18 @@ class GaugePainter extends CustomPainter {
               (radius - 12),
     );
 
+    final pointerColor =
+        value < 20
+            ? Colors.redAccent
+            : value < 40
+                ? Colors.orangeAccent
+                : value < 65
+                    ? Colors.amberAccent
+                    : Colors.greenAccent;
+
     final pointerPaint =
         Paint()
-          ..color = value < 25
-              ? Colors.redAccent
-              : value < 50
-                  ? Colors.orangeAccent
-                  : value < 75
-                      ? Colors.amberAccent
-                      : Colors.greenAccent
+          ..color = pointerColor
           ..strokeWidth = 7
           ..strokeCap =
               StrokeCap.round;
@@ -1277,10 +1703,8 @@ class GaugePainter extends CustomPainter {
 
     canvas.drawCircle(
       center,
-      9,
-      Paint()
-        ..color =
-            pointerPaint.color,
+      10,
+      Paint()..color = pointerColor,
     );
   }
 
@@ -1310,8 +1734,8 @@ class SignalPainter extends CustomPainter {
     Size size,
   ) {
     final gridPaint = Paint()
-      ..color = Colors.white
-          .withOpacity(0.06)
+      ..color =
+          Colors.white.withOpacity(0.06)
       ..strokeWidth = 1;
 
     for (int i = 0; i <= 4; i++) {
@@ -1357,9 +1781,8 @@ class SignalPainter extends CustomPainter {
     }
 
     final paint = Paint()
-      ..color =
-          Colors.cyanAccent
-      ..strokeWidth = 4
+      ..color = Colors.cyanAccent
+      ..strokeWidth = 3.5
       ..style =
           PaintingStyle.stroke
       ..strokeCap =
