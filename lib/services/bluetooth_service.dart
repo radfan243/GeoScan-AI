@@ -219,6 +219,12 @@ class BluetoothService {
 
     try {
       await device.connect(
+        // ======================================================
+        // الإصلاح الوحيد:
+        // flutter_blue_plus في نسخة البناء الحالية
+        // يطلب license بشكل إجباري.
+        // ======================================================
+        license: fbp.License.nonprofit,
         timeout:
             const Duration(seconds: 10),
         autoConnect: false,
