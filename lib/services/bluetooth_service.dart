@@ -5,18 +5,31 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
 class BluetoothService {
   // ============================================================
-  // GeoScan AI - Bluetooth Service
-  // الهاتف <-> ESP32
+  // GeoScan AI - FINAL Bluetooth Service
+  //
+  // Flutter <-> ESP32
   //
   // مسؤول عن:
-  // 1) البحث عن ESP32
-  // 2) الاتصال
-  // 3) اكتشاف خدمات BLE
-  // 4) استقبال البيانات
-  // 5) تجميع الحزم المجزأة
-  // 6) التحقق من JSON
-  // 7) تنظيف القراءات
-  // 8) إرسال الأوامر إلى ESP32
+  // 1. البحث عن ESP32
+  // 2. الاتصال
+  // 3. اكتشاف BLE Service / Characteristics
+  // 4. استقبال البيانات الحقيقية
+  // 5. تجميع الحزم المجزأة
+  // 6. التحقق من JSON
+  // 7. تنظيف البيانات
+  // 8. التحقق من signal / stability / depth
+  // 9. الاحتفاظ بـ raw و baseline
+  // 10. اكتشاف انقطاع البيانات
+  // 11. إرسال أوامر التحكم
+  //
+  // ملاحظة:
+  // هذا الملف لا يصنع قراءة وهمية.
+  // البيانات تأتي من ESP32 كما هي ثم يتم التحقق منها.
+  // ============================================================
+
+  // ============================================================
+  // UUIDs
+  // يجب أن تطابق ESP32
   // ============================================================
 
   static const String serviceUuid =
@@ -29,16 +42,17 @@ class BluetoothService {
       '12345678-1234-1234-1234-1234567890ad';
 
   // ============================================================
-  // الجهاز المتصل
+  // الجهاز
   // ============================================================
 
   fbp.BluetoothDevice? connectedDevice;
 
   fbp.BluetoothCharacteristic? _notifyCharacteristic;
+
   fbp.BluetoothCharacteristic? _writeCharacteristic;
 
   // ============================================================
-  // اشتراكات Bluetooth
+  // اشتراكات BLE
   // ============================================================
 
   StreamSubscription<List<fbp.ScanResult>>? _scanSubscription;
@@ -49,7 +63,7 @@ class BluetoothService {
   StreamSubscription<List<int>>? _notifySubscription;
 
   // ============================================================
-  // Streams
+  // Connection Stream
   // ============================================================
 
   final StreamController<bool> _connectionController =
@@ -58,11 +72,25 @@ class BluetoothService {
   Stream<bool> get connectionStream =>
       _connectionController.stream;
 
+  // ============================================================
+  // Data Stream
+  // ============================================================
+
   final StreamController<Map<String, dynamic>> _dataController =
       StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get dataStream =>
       _dataController.stream;
+
+  // ============================================================
+  // أخطاء Bluetooth
+  // ============================================================
+
+  final StreamController<String> _errorController =
+      StreamController<String>.broadcast();
+
+  Stream<String> get errorStream =>
+      _errorController.stream;
 
   // ============================================================
   // حالة الاتصال
@@ -79,30 +107,57 @@ class BluetoothService {
 
   bool _receivingData = false;
 
-  bool get receivingData => _receivingData;
+  bool get receivingData =>
+      _receivingData;
+
+  // ============================================================
+  // آخر قراءة
+  // ============================================================
 
   DateTime? _lastDataTime;
 
-  DateTime? get lastDataTime => _lastDataTime;
+  DateTime? get lastDataTime =>
+      _lastDataTime;
+
+  // ============================================================
+  // عدد القراءات المستلمة
+  // ============================================================
+
+  int _receivedPackets = 0;
+
+  int get receivedPackets =>
+      _receivedPackets;
+
+  // ============================================================
+  // آخر رقم تسلسلي
+  //
+  // إذا أرسل ESP32:
+  // "sequence": 123
+  //
+  // سيتم حفظه هنا.
+  // ============================================================
+
+  int? _lastSequence;
+
+  int? get lastSequence =>
+      _lastSequence;
 
   // ============================================================
   // Buffer
-  //
-  // مهم جدًا:
-  // Bluetooth قد يرسل JSON على أكثر من حزمة.
-  // لذلك لا نعتمد على أن كل packet = JSON كامل.
   // ============================================================
 
   String _receiveBuffer = '';
 
   // ============================================================
-  // البحث عن أجهزة Bluetooth
+  // البحث عن الأجهزة
   // ============================================================
 
   Future<List<fbp.ScanResult>> scanForDevices({
-    Duration duration = const Duration(seconds: 6),
+    Duration duration =
+        const Duration(seconds: 6),
   }) async {
-    final Map<String, fbp.ScanResult> devices = {};
+    final Map<String, fbp.ScanResult> devices =
+        {};
 
     await _scanSubscription?.cancel();
 
@@ -110,12 +165,17 @@ class BluetoothService {
         fbp.FlutterBluePlus.scanResults.listen(
       (results) {
         for (final result in results) {
-          final id = result.device.remoteId.str;
+          final id =
+              result.device.remoteId.str;
 
           devices[id] = result;
         }
       },
-      onError: (_) {},
+      onError: (error) {
+        _emitError(
+          'خطأ أثناء البحث عن أجهزة Bluetooth: $error',
+        );
+      },
     );
 
     try {
@@ -123,7 +183,15 @@ class BluetoothService {
         timeout: duration,
       );
 
-      await Future.delayed(duration);
+      await Future.delayed(
+        duration,
+      );
+    } catch (e) {
+      _emitError(
+        'تعذر بدء البحث عن Bluetooth: $e',
+      );
+
+      rethrow;
     } finally {
       try {
         await fbp.FlutterBluePlus.stopScan();
@@ -144,25 +212,30 @@ class BluetoothService {
   Future<void> connect(
     fbp.BluetoothDevice device,
   ) async {
+    // تنظيف اتصال سابق
     await disconnect();
 
     _resetReceiveState();
 
     try {
       await device.connect(
-        timeout: const Duration(seconds: 10),
+        timeout:
+            const Duration(seconds: 10),
         autoConnect: false,
       );
     } catch (e) {
-      throw Exception(
-        'فشل الاتصال بجهاز ESP32: $e',
-      );
+      final message =
+          'فشل الاتصال بجهاز ESP32: $e';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
     connectedDevice = device;
 
     // ==========================================================
-    // مراقبة حالة الاتصال
+    // مراقبة الاتصال
     // ==========================================================
 
     _connectionSubscription =
@@ -170,25 +243,34 @@ class BluetoothService {
       (state) async {
         final connected =
             state ==
-                fbp.BluetoothConnectionState.connected;
+                fbp.BluetoothConnectionState
+                    .connected;
 
-        if (!_connectionController.isClosed) {
+        if (!_connectionController
+            .isClosed) {
           _connectionController.add(
             connected,
           );
         }
 
         if (!connected) {
-          _notifyCharacteristic = null;
-          _writeCharacteristic = null;
+          _notifyCharacteristic =
+              null;
+
+          _writeCharacteristic =
+              null;
 
           _receivingData = false;
 
           _resetReceiveState();
         }
       },
-      onError: (_) {
+      onError: (error) {
         _receivingData = false;
+
+        _emitError(
+          'انقطع اتصال Bluetooth: $error',
+        );
       },
     );
 
@@ -204,44 +286,54 @@ class BluetoothService {
     } catch (e) {
       await disconnect();
 
-      throw Exception(
-        'تعذر اكتشاف خدمات ESP32: $e',
-      );
+      final message =
+          'تعذر اكتشاف خدمات ESP32: $e';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
-    fbp.BluetoothCharacteristic? notifyCharacteristic;
-    fbp.BluetoothCharacteristic? writeCharacteristic;
+    fbp.BluetoothCharacteristic?
+        notifyCharacteristic;
+
+    fbp.BluetoothCharacteristic?
+        writeCharacteristic;
 
     // ==========================================================
-    // البحث عن الخدمة والخصائص المطلوبة
+    // البحث عن الخدمة
     // ==========================================================
 
     for (final service in services) {
-      final serviceId =
+      final currentServiceUuid =
           service.uuid
               .toString()
               .toLowerCase();
 
-      if (serviceId !=
+      if (currentServiceUuid !=
           serviceUuid.toLowerCase()) {
         continue;
       }
 
+      // ========================================================
+      // البحث عن Characteristics
+      // ========================================================
+
       for (final characteristic
           in service.characteristics) {
-        final id =
+        final currentUuid =
             characteristic.uuid
                 .toString()
                 .toLowerCase();
 
-        if (id ==
+        if (currentUuid ==
             notifyCharacteristicUuid
                 .toLowerCase()) {
           notifyCharacteristic =
               characteristic;
         }
 
-        if (id ==
+        if (currentUuid ==
             writeCharacteristicUuid
                 .toLowerCase()) {
           writeCharacteristic =
@@ -251,27 +343,33 @@ class BluetoothService {
     }
 
     // ==========================================================
-    // التحقق من قناة الاستقبال
+    // التحقق من Notify
     // ==========================================================
 
     if (notifyCharacteristic == null) {
       await disconnect();
 
-      throw Exception(
-        'لم يتم العثور على قناة استقبال البيانات من ESP32.',
-      );
+      const message =
+          'لم يتم العثور على قناة استقبال البيانات من ESP32.';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
     // ==========================================================
-    // التحقق من قناة الإرسال
+    // التحقق من Write
     // ==========================================================
 
     if (writeCharacteristic == null) {
       await disconnect();
 
-      throw Exception(
-        'لم يتم العثور على قناة إرسال الأوامر إلى ESP32.',
-      );
+      const message =
+          'لم يتم العثور على قناة إرسال الأوامر إلى ESP32.';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
     _notifyCharacteristic =
@@ -281,7 +379,7 @@ class BluetoothService {
         writeCharacteristic;
 
     // ==========================================================
-    // تفعيل Notifications
+    // تفعيل استقبال Notifications
     // ==========================================================
 
     try {
@@ -290,9 +388,12 @@ class BluetoothService {
     } catch (e) {
       await disconnect();
 
-      throw Exception(
-        'تعذر تفعيل استقبال بيانات ESP32: $e',
-      );
+      final message =
+          'تعذر تفعيل استقبال بيانات ESP32: $e';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
     // ==========================================================
@@ -302,23 +403,27 @@ class BluetoothService {
     await _notifySubscription?.cancel();
 
     // ==========================================================
-    // استقبال البيانات
+    // استقبال بيانات ESP32
     // ==========================================================
 
     _notifySubscription =
         _notifyCharacteristic!
             .lastValueStream
             .listen(
-      (value) {
-        _handleIncomingData(value);
+      (bytes) {
+        _handleIncomingData(bytes);
       },
-      onError: (_) {
+      onError: (error) {
         _receivingData = false;
+
+        _emitError(
+          'خطأ في استقبال بيانات ESP32: $error',
+        );
       },
     );
 
     // ==========================================================
-    // تأكيد الاتصال
+    // الاتصال أصبح جاهزًا
     // ==========================================================
 
     _receivingData = true;
@@ -326,10 +431,20 @@ class BluetoothService {
     if (!_connectionController.isClosed) {
       _connectionController.add(true);
     }
+
+    // ==========================================================
+    // طلب الحالة الحالية من ESP32
+    // ==========================================================
+
+    try {
+      await getStatus();
+    } catch (_) {
+      // لا نفشل الاتصال إذا لم يرد ESP32 فورًا.
+    }
   }
 
   // ============================================================
-  // استقبال البيانات من ESP32
+  // استقبال bytes من ESP32
   // ============================================================
 
   void _handleIncomingData(
@@ -350,24 +465,29 @@ class BluetoothService {
         return;
       }
 
-      _lastDataTime = DateTime.now();
+      _lastDataTime =
+          DateTime.now();
+
+      _receivedPackets++;
 
       _receiveBuffer += text;
 
       // ========================================================
-      // حماية من تضخم الذاكرة في حالة بيانات تالفة
+      // حماية الذاكرة
       // ========================================================
 
-      if (_receiveBuffer.length > 8192) {
+      if (_receiveBuffer.length > 16384) {
         _receiveBuffer =
             _receiveBuffer.substring(
-          _receiveBuffer.length - 4096,
+          _receiveBuffer.length - 8192,
         );
       }
 
       _processReceiveBuffer();
-    } catch (_) {
-      // لا نوقف التطبيق بسبب packet تالفة.
+    } catch (e) {
+      _emitError(
+        'تعذر قراءة بيانات ESP32: $e',
+      );
     }
   }
 
@@ -377,13 +497,8 @@ class BluetoothService {
 
   void _processReceiveBuffer() {
     // ==========================================================
-    // أولًا:
-    // نحاول التعامل مع JSON كامل مباشرة.
-    //
-    // هذا مهم إذا كان ESP32 يرسل:
-    // {"signal":50,"stability":90}
-    //
-    // بدون newline.
+    // الحالة الأولى:
+    // JSON كامل
     // ==========================================================
 
     final trimmed =
@@ -404,19 +519,13 @@ class BluetoothService {
           return;
         }
       } catch (_) {
-        // قد يكون JSON مجزأ.
-        // ننتظر packet التالية.
+        // JSON قد يكون مجزأ.
       }
     }
 
     // ==========================================================
-    // ثانيًا:
-    // إذا كان ESP32 يرسل JSON بهذا الشكل:
-    //
-    // {"signal":20}\n
-    // {"signal":30}\n
-    //
-    // نعالج كل سطر بشكل مستقل.
+    // الحالة الثانية:
+    // JSON مع newline
     // ==========================================================
 
     while (true) {
@@ -428,12 +537,10 @@ class BluetoothService {
       }
 
       final line =
-          _receiveBuffer
-              .substring(
-                0,
-                newlineIndex,
-              )
-              .trim();
+          _receiveBuffer.substring(
+        0,
+        newlineIndex,
+      ).trim();
 
       _receiveBuffer =
           _receiveBuffer.substring(
@@ -446,10 +553,24 @@ class BluetoothService {
 
       _tryDecodeJson(line);
     }
+
+    // ==========================================================
+    // تنظيف البيانات التالفة قبل بداية JSON
+    // ==========================================================
+
+    final firstBrace =
+        _receiveBuffer.indexOf('{');
+
+    if (firstBrace > 0) {
+      _receiveBuffer =
+          _receiveBuffer.substring(
+        firstBrace,
+      );
+    }
   }
 
   // ============================================================
-  // محاولة فك JSON
+  // فك JSON
   // ============================================================
 
   void _tryDecodeJson(
@@ -464,31 +585,94 @@ class BluetoothService {
         _publishData(decoded);
       }
     } catch (_) {
-      // تجاهل البيانات غير الصالحة.
+      // تجاهل packet تالفة.
     }
   }
 
   // ============================================================
-  // نشر البيانات بعد تنظيفها
+  // نشر البيانات
   // ============================================================
 
   void _publishData(
     Map<String, dynamic> rawData,
   ) {
+    if (rawData.isEmpty) {
+      return;
+    }
+
     final data =
         Map<String, dynamic>.from(
       rawData,
     );
 
     // ==========================================================
+    // type
+    // ==========================================================
+
+    if (data.containsKey('type')) {
+      data['type'] =
+          data['type']
+              .toString()
+              .trim();
+    }
+
+    // ==========================================================
     // signal
     // ==========================================================
 
     if (data.containsKey('signal')) {
-      data['signal'] =
-          _sanitizePercentage(
+      final value =
+          _parseFiniteDouble(
         data['signal'],
       );
+
+      if (value == null) {
+        return;
+      }
+
+      data['signal'] =
+          value.clamp(
+        0.0,
+        100.0,
+      );
+    }
+
+    // ==========================================================
+    // raw
+    //
+    // لا نعدل raw.
+    // هذه القيمة هي قراءة ADC التي أرسلها ESP32.
+    // ==========================================================
+
+    if (data.containsKey('raw')) {
+      final raw =
+          _parseFiniteDouble(
+        data['raw'],
+      );
+
+      if (raw == null) {
+        data.remove('raw');
+      } else {
+        data['raw'] = raw;
+      }
+    }
+
+    // ==========================================================
+    // baseline
+    // ==========================================================
+
+    if (data.containsKey('baseline')) {
+      final baseline =
+          _parseFiniteDouble(
+        data['baseline'],
+      );
+
+      if (baseline == null) {
+        data.remove('baseline');
+      } else {
+        data['baseline'] =
+            baseline;
+      }
     }
 
     // ==========================================================
@@ -496,21 +680,86 @@ class BluetoothService {
     // ==========================================================
 
     if (data.containsKey('stability')) {
-      data['stability'] =
-          _sanitizePercentage(
+      final value =
+          _parseFiniteDouble(
         data['stability'],
+      );
+
+      if (value == null) {
+        return;
+      }
+
+      data['stability'] =
+          value.clamp(
+        0.0,
+        100.0,
       );
     }
 
     // ==========================================================
     // depth
+    //
+    // لا نخترع العمق.
+    // إذا لم يرسله ESP32 يبقى غير موجود.
     // ==========================================================
 
     if (data.containsKey('depth')) {
-      data['depth'] =
-          _sanitizeDepth(
+      final value =
+          _parseFiniteDouble(
         data['depth'],
       );
+
+      if (value == null ||
+          value < 0) {
+        data.remove('depth');
+      } else {
+        data['depth'] =
+            value.clamp(
+          0.0,
+          1000.0,
+        );
+      }
+    }
+
+    // ==========================================================
+    // sequence
+    // ==========================================================
+
+    if (data.containsKey('sequence')) {
+      final sequence =
+          _parseInteger(
+        data['sequence'],
+      );
+
+      if (sequence != null &&
+          sequence >= 0) {
+        data['sequence'] =
+            sequence;
+
+        _lastSequence =
+            sequence;
+      } else {
+        data.remove('sequence');
+      }
+    }
+
+    // ==========================================================
+    // timestamp
+    // ==========================================================
+
+    if (data.containsKey('timestamp')) {
+      final timestamp =
+          _parseInteger(
+        data['timestamp'],
+      );
+
+      if (timestamp != null &&
+          timestamp >= 0) {
+        data['timestamp'] =
+            timestamp;
+      } else {
+        data.remove('timestamp');
+      }
     }
 
     // ==========================================================
@@ -525,14 +774,75 @@ class BluetoothService {
     }
 
     // ==========================================================
-    // وقت القراءة
+    // scanning
+    // ==========================================================
+
+    if (data.containsKey('scanning')) {
+      final scanning =
+          _parseBool(
+        data['scanning'],
+      );
+
+      if (scanning != null) {
+        data['scanning'] =
+            scanning;
+      }
+    }
+
+    // ==========================================================
+    // sensitivity
+    // ==========================================================
+
+    if (data.containsKey('sensitivity')) {
+      final value =
+          _parseFiniteDouble(
+        data['sensitivity'],
+      );
+
+      if (value != null) {
+        data['sensitivity'] =
+            value.clamp(
+          0.0,
+          100.0,
+        );
+      }
+    }
+
+    // ==========================================================
+    // filter
+    // ==========================================================
+
+    if (data.containsKey('filter')) {
+      data['filter'] =
+          data['filter']
+              .toString()
+              .trim();
+    }
+
+    // ==========================================================
+    // مصدر البيانات
+    // ==========================================================
+
+    data['source'] =
+        'ESP32';
+
+    // ==========================================================
+    // وقت استلام Flutter للبيانات
     // ==========================================================
 
     data['receivedAt'] =
         DateTime.now()
             .millisecondsSinceEpoch;
 
+    // ==========================================================
+    // حالة استقبال البيانات
+    // ==========================================================
+
     _receivingData = true;
+
+    // ==========================================================
+    // إرسال البيانات إلى ScanScreen
+    // ==========================================================
 
     if (!_dataController.isClosed) {
       _dataController.add(data);
@@ -540,70 +850,85 @@ class BluetoothService {
   }
 
   // ============================================================
-  // تنظيف النسبة المئوية
-  //
-  // signal و stability:
-  // 0 -> 100
+  // تحويل رقم آمن
   // ============================================================
 
-  double _sanitizePercentage(
+  double? _parseFiniteDouble(
     dynamic value,
   ) {
-    double result;
+    double? result;
 
     if (value is num) {
       result = value.toDouble();
     } else {
       result =
           double.tryParse(
-            value.toString(),
-          ) ??
-          0;
+        value.toString().trim(),
+      );
     }
 
-    if (!result.isFinite) {
-      return 0;
+    if (result == null ||
+        !result.isFinite) {
+      return null;
     }
 
-    return result.clamp(
-      0.0,
-      100.0,
+    return result;
+  }
+
+  // ============================================================
+  // تحويل Integer
+  // ============================================================
+
+  int? _parseInteger(
+    dynamic value,
+  ) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      final double number =
+          value.toDouble();
+
+      if (!number.isFinite) {
+        return null;
+      }
+
+      return number.round();
+    }
+
+    return int.tryParse(
+      value.toString().trim(),
     );
   }
 
   // ============================================================
-  // تنظيف العمق
-  //
-  // لا نفرض رقمًا وهميًا.
-  // فقط نمنع القيم السالبة أو غير الصالحة.
+  // Boolean
   // ============================================================
 
-  double _sanitizeDepth(
+  bool? _parseBool(
     dynamic value,
   ) {
-    double result;
-
-    if (value is num) {
-      result = value.toDouble();
-    } else {
-      result =
-          double.tryParse(
-            value.toString(),
-          ) ??
-          0;
+    if (value is bool) {
+      return value;
     }
 
-    if (!result.isFinite ||
-        result < 0) {
-      return 0;
+    final text =
+        value.toString().trim().toLowerCase();
+
+    if (text == 'true' ||
+        text == '1' ||
+        text == 'yes') {
+      return true;
     }
 
-    // حماية من القيم الشاذة.
-    // يمكن تعديل الحد لاحقًا حسب الدائرة الحقيقية.
-    return result.clamp(
-      0.0,
-      1000.0,
-    );
+    if (text == 'false' ||
+        text == '0' ||
+        text == 'no') {
+      return false;
+    }
+
+    return null;
   }
 
   // ============================================================
@@ -615,9 +940,12 @@ class BluetoothService {
   ) async {
     if (!isConnected ||
         _writeCharacteristic == null) {
-      throw Exception(
-        'ESP32 غير متصل أو قناة الأوامر غير جاهزة.',
-      );
+      const message =
+          'ESP32 غير متصل أو قناة الأوامر غير جاهزة.';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
 
     final cleanCommand =
@@ -628,9 +956,7 @@ class BluetoothService {
     }
 
     // ==========================================================
-    // نرسل الأمر مع newline.
-    //
-    // ESP32 يستطيع قراءة الأمر كسطر كامل.
+    // ESP32 يستقبل الأمر كسطر
     // ==========================================================
 
     final payload =
@@ -639,19 +965,38 @@ class BluetoothService {
     );
 
     try {
-      await _writeCharacteristic!.write(
-        payload,
-        withoutResponse: true,
-      );
+      // ========================================================
+      // نستخدم Write Without Response
+      // لأن ESP32 أعد characteristic بهذه الخاصية.
+      // ========================================================
+
+      if (_writeCharacteristic!
+          .properties
+          .writeWithoutResponse) {
+        await _writeCharacteristic!
+            .write(
+          payload,
+          withoutResponse: true,
+        );
+      } else {
+        await _writeCharacteristic!
+            .write(
+          payload,
+          withoutResponse: false,
+        );
+      }
     } catch (e) {
-      throw Exception(
-        'فشل إرسال الأمر إلى ESP32: $e',
-      );
+      final message =
+          'فشل إرسال الأمر إلى ESP32: $e';
+
+      _emitError(message);
+
+      throw Exception(message);
     }
   }
 
   // ============================================================
-  // أوامر GeoScan AI
+  // START
   // ============================================================
 
   Future<void> startScan() async {
@@ -660,17 +1005,29 @@ class BluetoothService {
     );
   }
 
+  // ============================================================
+  // STOP
+  // ============================================================
+
   Future<void> stopScan() async {
     await sendCommand(
       'STOP',
     );
   }
 
+  // ============================================================
+  // CALIBRATE
+  // ============================================================
+
   Future<void> calibrate() async {
     await sendCommand(
       'CALIBRATE',
     );
   }
+
+  // ============================================================
+  // GET STATUS
+  // ============================================================
 
   Future<void> getStatus() async {
     await sendCommand(
@@ -747,13 +1104,70 @@ class BluetoothService {
   }
 
   // ============================================================
-  // إعادة ضبط حالة استقبال البيانات
+  // فحص سلامة استقبال البيانات
+  //
+  // إذا مر وقت طويل بدون بيانات:
+  // receivingData يصبح false.
+  // ============================================================
+
+  bool get hasRecentData {
+    if (_lastDataTime == null) {
+      return false;
+    }
+
+    final elapsed =
+        DateTime.now()
+            .difference(
+      _lastDataTime!,
+    );
+
+    return elapsed.inSeconds < 3;
+  }
+
+  // ============================================================
+  // آخر عمر للبيانات بالميلي ثانية
+  // ============================================================
+
+  int? get dataAgeMilliseconds {
+    if (_lastDataTime == null) {
+      return null;
+    }
+
+    return DateTime.now()
+        .difference(
+          _lastDataTime!,
+        )
+        .inMilliseconds;
+  }
+
+  // ============================================================
+  // إعادة ضبط حالة الاستقبال
   // ============================================================
 
   void _resetReceiveState() {
     _receiveBuffer = '';
+
     _receivingData = false;
+
     _lastDataTime = null;
+
+    _receivedPackets = 0;
+
+    _lastSequence = null;
+  }
+
+  // ============================================================
+  // إرسال خطأ
+  // ============================================================
+
+  void _emitError(
+    String message,
+  ) {
+    if (!_errorController.isClosed) {
+      _errorController.add(
+        message,
+      );
+    }
   }
 
   // ============================================================
@@ -771,16 +1185,27 @@ class BluetoothService {
 
     _resetReceiveState();
 
+    if (_notifyCharacteristic != null) {
+      try {
+        await _notifyCharacteristic!
+            .setNotifyValue(false);
+      } catch (_) {}
+    }
+
     if (connectedDevice != null) {
       try {
-        await connectedDevice!.disconnect();
+        await connectedDevice!
+            .disconnect();
       } catch (_) {}
     }
 
     connectedDevice = null;
 
-    _notifyCharacteristic = null;
-    _writeCharacteristic = null;
+    _notifyCharacteristic =
+        null;
+
+    _writeCharacteristic =
+        null;
 
     if (!_connectionController.isClosed) {
       _connectionController.add(false);
@@ -793,14 +1218,20 @@ class BluetoothService {
 
   Future<void> dispose() async {
     await _scanSubscription?.cancel();
+
     await _notifySubscription?.cancel();
+
     await _connectionSubscription?.cancel();
 
     _scanSubscription = null;
+
     _notifySubscription = null;
+
     _connectionSubscription = null;
 
-    _resetReceiveState();
+    try {
+      await disconnect();
+    } catch (_) {}
 
     if (!_connectionController.isClosed) {
       await _connectionController.close();
@@ -808,6 +1239,10 @@ class BluetoothService {
 
     if (!_dataController.isClosed) {
       await _dataController.close();
+    }
+
+    if (!_errorController.isClosed) {
+      await _errorController.close();
     }
   }
 }
