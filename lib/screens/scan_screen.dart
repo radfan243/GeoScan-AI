@@ -1555,9 +1555,18 @@ class _ScanScreenState extends State<ScanScreen> {
 
           const SizedBox(height: 12),
 
-          Expanded(
-            child: child,
-          ),
+          // ======================================================
+          // الإصلاح فقط:
+          // Expanded يستخدم عندما يكون للبطاقة ارتفاع محدد.
+          // أما البطاقات بدون height فتستخدم child مباشرة.
+          // ======================================================
+
+          if (height != null)
+            Expanded(
+              child: child,
+            )
+          else
+            child,
         ],
       ),
     );
