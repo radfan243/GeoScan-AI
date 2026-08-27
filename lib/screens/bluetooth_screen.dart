@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
 import '../services/bluetooth_service.dart';
-import 'scan_screen.dart';
 
 class BluetoothScreen extends StatefulWidget {
   const BluetoothScreen({super.key});
@@ -12,830 +13,478 @@ class BluetoothScreen extends StatefulWidget {
 }
 
 class _BluetoothScreenState extends State<BluetoothScreen> {
-  final BluetoothService _bluetooth = BluetoothService();
+  final BluetoothService _bluetoothService = BluetoothService();
 
-  List<fbp.ScanResult> _devices = [];
+  final List<fbp.ScanResult> _devices = [];
+
+  StreamSubscription<bool>? _connectionSubscription;
 
   bool _scanning = false;
   bool _connecting = false;
+  bool _connected = false;
 
-  fbp.BluetoothDevice? _connectedDevice;
+  String _status = 'جاهز للبحث عن ESP32';
+  String _connectedDevice = '';
 
   @override
   void initState() {
     super.initState();
 
-    _connectedDevice = _bluetooth.connectedDevice;
+    _connectionSubscription =
+        _bluetoothService.connectionStream.listen((connected) {
+      if (!mounted) return;
+
+      setState(() {
+        _connected = connected;
+
+        if (connected) {
+          _status = 'متصل بجهاز ESP32';
+          _connectedDevice = _bluetoothService.deviceName;
+        } else {
+          _status = 'غير متصل';
+          _connectedDevice = '';
+        }
+      });
+    });
   }
 
-  // ============================================================
-  // البحث عن أجهزة Bluetooth
-  // ============================================================
+  @override
+  void dispose() {
+    _connectionSubscription?.cancel();
+    _bluetoothService.dispose();
+    super.dispose();
+  }
 
-  Future<void> _scanDevices() async {
+  Future<void> _startScan() async {
     if (_scanning) return;
-
-    if (!mounted) return;
 
     setState(() {
       _scanning = true;
-      _devices = [];
+      _devices.clear();
+      _status = 'جاري البحث عن أجهزة ESP32...';
     });
 
     try {
-      final results = await _bluetooth.scanForDevices(
-        duration: const Duration(seconds: 6),
-      );
+      final results = await _bluetoothService.scan();
 
       if (!mounted) return;
-
-      // ترتيب الأجهزة: التي تحمل اسمًا أولًا
-      results.sort((a, b) {
-        final nameA = a.device.name.trim();
-        final nameB = b.device.name.trim();
-
-        if (nameA.isEmpty && nameB.isNotEmpty) {
-          return 1;
-        }
-
-        if (nameA.isNotEmpty && nameB.isEmpty) {
-          return -1;
-        }
-
-        return nameA.compareTo(nameB);
-      });
 
       setState(() {
-        _devices = results;
+        _devices
+          ..clear()
+          ..addAll(results);
+
+        _scanning = false;
+
+        if (_devices.isEmpty) {
+          _status = 'لم يتم العثور على جهاز';
+        } else {
+          _status = 'تم العثور على ${_devices.length} جهاز';
+        }
       });
-
-      if (_devices.isEmpty) {
-        _showMessage(
-          'لم يتم العثور على أجهزة Bluetooth.',
-        );
-      }
     } catch (e) {
-      if (!mounted) return;
-
-      _showMessage(
-        'حدث خطأ أثناء البحث عن الأجهزة.',
-      );
-    } finally {
       if (!mounted) return;
 
       setState(() {
         _scanning = false;
+        _status = 'حدث خطأ أثناء البحث';
       });
+
+      _showMessage('تعذر البحث عن أجهزة Bluetooth');
     }
   }
 
-  // ============================================================
-  // الاتصال بالجهاز
-  // ============================================================
-
-  Future<void> _connect(
-    fbp.BluetoothDevice device,
-  ) async {
+  Future<void> _connect(fbp.BluetoothDevice device) async {
     if (_connecting) return;
-
-    if (!mounted) return;
 
     setState(() {
       _connecting = true;
+      _status = 'جاري الاتصال بـ ESP32...';
     });
 
     try {
-      await _bluetooth.connect(device);
+      final success = await _bluetoothService.connect(device);
 
       if (!mounted) return;
 
-      setState(() {
-        _connectedDevice = device;
-      });
+      if (success) {
+        final notifications =
+            await _bluetoothService.startNotifications();
 
-      _showMessage(
-        'تم الاتصال بجهاز ESP32 بنجاح.',
-        success: true,
-      );
+        if (!mounted) return;
+
+        setState(() {
+          _connecting = false;
+          _connected = true;
+          _connectedDevice = _bluetoothService.deviceName;
+
+          _status = notifications
+              ? 'متصل وجاهز لاستقبال البيانات'
+              : 'متصل، لكن الإشعارات غير مفعلة';
+        });
+
+        _showMessage('تم الاتصال بنجاح');
+      } else {
+        setState(() {
+          _connecting = false;
+          _connected = false;
+          _status = 'فشل الاتصال';
+        });
+
+        _showMessage('فشل الاتصال بجهاز ESP32');
+      }
     } catch (e) {
-      if (!mounted) return;
-
-      _showMessage(
-        'فشل الاتصال بجهاز ESP32.',
-      );
-    } finally {
       if (!mounted) return;
 
       setState(() {
         _connecting = false;
+        _connected = false;
+        _status = 'فشل الاتصال';
       });
+
+      _showMessage('حدث خطأ أثناء الاتصال');
     }
   }
-
-  // ============================================================
-  // فصل الجهاز
-  // ============================================================
 
   Future<void> _disconnect() async {
-    try {
-      await _bluetooth.disconnect();
+    await _bluetoothService.disconnect();
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      setState(() {
-        _connectedDevice = null;
-      });
-
-      _showMessage(
-        'تم فصل جهاز ESP32.',
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      _showMessage(
-        'تعذر فصل الجهاز.',
-      );
-    }
+    setState(() {
+      _connected = false;
+      _connectedDevice = '';
+      _status = 'تم فصل الجهاز';
+    });
   }
 
-  // ============================================================
-  // الانتقال إلى شاشة المسح
-  // ============================================================
+  void _showMessage(String message) {
+    if (!mounted) return;
 
-  void _openScanScreen() {
-    if (!_bluetooth.isConnected) {
-      _showMessage(
-        'اتصل بجهاز ESP32 أولًا.',
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const ScanScreen(),
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          textDirection: TextDirection.rtl,
+        ),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
 
-  // ============================================================
-  // الرسائل
-  // ============================================================
+  String _deviceName(fbp.ScanResult result) {
+    final platformName = result.device.platformName.trim();
 
-  void _showMessage(
-    String message, {
-    bool success = false,
-  }) {
-    if (!mounted) return;
+    if (platformName.isNotEmpty) {
+      return platformName;
+    }
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            message,
-            textDirection: TextDirection.rtl,
-          ),
-          backgroundColor:
-              success ? Colors.green.shade700 : null,
-        ),
-      );
-  }
+    final advertisedName =
+        result.advertisementData.advName.trim();
 
-  // ============================================================
-  // اسم الجهاز
-  // ============================================================
-
-  String _deviceName(
-    fbp.BluetoothDevice device,
-  ) {
-    final name = device.name.trim();
-
-    if (name.isNotEmpty) {
-      return name;
+    if (advertisedName.isNotEmpty) {
+      return advertisedName;
     }
 
     return 'جهاز Bluetooth';
   }
 
-  // ============================================================
-  // قوة الإشارة
-  // ============================================================
+  bool _isGeoScanDevice(fbp.ScanResult result) {
+    final name = _deviceName(result).toLowerCase();
 
-  String _signalText(
-    fbp.ScanResult result,
-  ) {
-    final rssi = result.rssi;
-
-    if (rssi >= -60) {
-      return 'إشارة قوية';
-    }
-
-    if (rssi >= -80) {
-      return 'إشارة جيدة';
-    }
-
-    return 'إشارة ضعيفة';
+    return name.contains('geoscan') ||
+        name.contains('esp32');
   }
-
-  Color _signalColor(
-    fbp.ScanResult result,
-  ) {
-    final rssi = result.rssi;
-
-    if (rssi >= -60) {
-      return Colors.greenAccent;
-    }
-
-    if (rssi >= -80) {
-      return Colors.amberAccent;
-    }
-
-    return Colors.orangeAccent;
-  }
-
-  // ============================================================
-  // واجهة المستخدم
-  // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final connected = _bluetooth.isConnected;
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF050B16),
-
-        // ======================================================
-        // AppBar
-        // ======================================================
-
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF050B16),
-          elevation: 0,
-          centerTitle: true,
-
-          title: const Column(
-            children: [
-              Text(
-                'GeoScan AI',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                'اتصال الجهاز',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white54,
-                ),
-              ),
-            ],
+    return Scaffold(
+      backgroundColor: const Color(0xFF060B18),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF060B18),
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          'GeoScan AI',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
           ),
-
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(
-                left: 12,
-              ),
-              child: Icon(
-                connected
-                    ? Icons.bluetooth_connected
-                    : Icons.bluetooth_disabled,
-                color: connected
-                    ? Colors.greenAccent
-                    : Colors.redAccent,
-              ),
-            ),
-          ],
         ),
-
-        // ======================================================
-        // Body
-        // ======================================================
-
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(
-              16,
-              10,
-              16,
-              30,
-            ),
+        actions: [
+          IconButton(
+            onPressed: _scanning ? null : _startScan,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'بحث',
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.stretch,
               children: [
-
-                // ==================================================
-                // بطاقة الحالة
-                // ==================================================
-
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient:
-                        const LinearGradient(
-                      colors: [
-                        Color(0xFF123B4A),
-                        Color(0xFF07111F),
-                      ],
-                      begin: Alignment.topRight,
-                      end: Alignment.bottomLeft,
-                    ),
-                    borderRadius:
-                        BorderRadius.circular(24),
-                    border: Border.all(
-                      color: Colors.cyanAccent
-                          .withOpacity(0.15),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(
-                        connected
-                            ? Icons.bluetooth_connected
-                            : Icons.bluetooth_searching,
-                        size: 70,
-                        color: connected
-                            ? Colors.greenAccent
-                            : Colors.cyanAccent,
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      Text(
-                        connected
-                            ? 'ESP32 متصل'
-                            : 'Bluetooth غير متصل',
-                        style: TextStyle(
-                          color: connected
-                              ? Colors.greenAccent
-                              : Colors.white,
-                          fontSize: 23,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      Text(
-                        connected
-                            ? _deviceName(
-                                _connectedDevice!,
-                              )
-                            : 'ابحث عن جهاز ESP32 للبدء',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
+                _connectionCard(),
+                const SizedBox(height: 16),
+                _scanButton(),
                 const SizedBox(height: 18),
-
-                // ==================================================
-                // زر البحث
-                // ==================================================
-
-                SizedBox(
-                  height: 58,
-                  child: FilledButton.icon(
-                    onPressed:
-                        _scanning ? null : _scanDevices,
-                    icon: _scanning
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child:
-                                CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.bluetooth_searching,
-                            size: 27,
-                          ),
-                    label: Text(
-                      _scanning
-                          ? 'جاري البحث...'
-                          : 'البحث عن أجهزة ESP32',
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ==================================================
-                // عنوان الأجهزة
-                // ==================================================
-
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.devices,
-                      color: Colors.cyanAccent,
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    const Expanded(
-                      child: Text(
-                        'الأجهزة المكتشفة',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    if (_devices.isNotEmpty)
-                      Text(
-                        '${_devices.length}',
-                        style: const TextStyle(
-                          color: Colors.cyanAccent,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                // ==================================================
-                // قائمة الأجهزة
-                // ==================================================
-
-                if (_devices.isEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.all(28),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF07111F),
-                      borderRadius:
-                          BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.white
-                            .withOpacity(0.07),
-                      ),
-                    ),
-                    child: const Column(
-                      children: [
-                        Icon(
-                          Icons.bluetooth_disabled,
-                          size: 55,
-                          color: Colors.white38,
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          'لا توجد أجهزة مكتشفة',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 16,
-                            fontWeight:
-                                FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'اضغط على زر البحث للعثور على جهاز ESP32.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                else
-                  ..._devices.map(
-                    (result) {
-                      final device =
-                          result.device;
-
-                      final name =
-                          _deviceName(device);
-
-                      final isCurrent =
-                          _connectedDevice
-                                  ?.remoteId ==
-                              device.remoteId;
-
-                      final signalColor =
-                          _signalColor(result);
-
-                      return Container(
-                        margin:
-                            const EdgeInsets.only(
-                          bottom: 10,
-                        ),
-                        decoration:
-                            BoxDecoration(
-                          color:
-                              const Color(0xFF07111F),
-                          borderRadius:
-                              BorderRadius.circular(
-                            18,
-                          ),
-                          border: Border.all(
-                            color: isCurrent
-                                ? Colors.greenAccent
-                                    .withOpacity(
-                                    0.45,
-                                  )
-                                : Colors.white
-                                    .withOpacity(
-                                    0.07,
-                                  ),
-                          ),
-                        ),
-                        child: Padding(
-                          padding:
-                              const EdgeInsets.all(
-                            12,
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration:
-                                    BoxDecoration(
-                                  color: Colors
-                                      .cyanAccent
-                                      .withOpacity(
-                                    0.08,
-                                  ),
-                                  borderRadius:
-                                      BorderRadius
-                                          .circular(
-                                    14,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.memory,
-                                  color: Colors
-                                      .cyanAccent,
-                                ),
-                              ),
-
-                              const SizedBox(
-                                width: 12,
-                              ),
-
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment
-                                          .start,
-                                  children: [
-                                    Text(
-                                      name,
-                                      maxLines: 1,
-                                      overflow:
-                                          TextOverflow
-                                              .ellipsis,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white,
-                                        fontSize: 16,
-                                        fontWeight:
-                                            FontWeight
-                                                .bold,
-                                      ),
-                                    ),
-
-                                    const SizedBox(
-                                      height: 4,
-                                    ),
-
-                                    Text(
-                                      device.remoteId
-                                          .str,
-                                      maxLines: 1,
-                                      overflow:
-                                          TextOverflow
-                                              .ellipsis,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white38,
-                                        fontSize: 10,
-                                      ),
-                                    ),
-
-                                    const SizedBox(
-                                      height: 4,
-                                    ),
-
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons
-                                              .signal_cellular_alt,
-                                          size: 14,
-                                          color:
-                                              signalColor,
-                                        ),
-                                        const SizedBox(
-                                          width: 4,
-                                        ),
-                                        Text(
-                                          '${result.rssi} dBm — ${_signalText(result)}',
-                                          style:
-                                              TextStyle(
-                                            color:
-                                                signalColor,
-                                            fontSize:
-                                                11,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              const SizedBox(
-                                width: 8,
-                              ),
-
-                              if (isCurrent)
-                                IconButton(
-                                  tooltip:
-                                      'فصل الاتصال',
-                                  onPressed:
-                                      _disconnect,
-                                  icon:
-                                      const Icon(
-                                    Icons
-                                        .link_off,
-                                    color:
-                                        Colors
-                                            .redAccent,
-                                  ),
-                                )
-                              else
-                                FilledButton(
-                                  onPressed:
-                                      _connecting
-                                          ? null
-                                          : () =>
-                                              _connect(
-                                                device,
-                                              ),
-                                  child: _connecting
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child:
-                                              CircularProgressIndicator(
-                                            strokeWidth:
-                                                2,
-                                          ),
-                                        )
-                                      : const Text(
-                                          'اتصال',
-                                        ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-
-                // ==================================================
-                // الانتقال إلى المسح
-                // ==================================================
-
-                if (connected) ...[
-                  const SizedBox(height: 14),
-
-                  Container(
-                    padding:
-                        const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.greenAccent
-                          .withOpacity(0.05),
-                      borderRadius:
-                          BorderRadius.circular(18),
-                      border: Border.all(
-                        color: Colors.greenAccent
-                            .withOpacity(0.18),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(
-                              Icons.check_circle,
-                              color:
-                                  Colors.greenAccent,
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'الجهاز جاهز',
-                              style: TextStyle(
-                                color:
-                                    Colors.greenAccent,
-                                fontSize: 17,
-                                fontWeight:
-                                    FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        const Text(
-                          'تم إنشاء اتصال Bluetooth ويمكن الآن الانتقال إلى شاشة المسح واستقبال بيانات الحساس.',
-                          textAlign:
-                              TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        SizedBox(
-                          width:
-                              double.infinity,
-                          height: 52,
-                          child:
-                              FilledButton.icon(
-                            onPressed:
-                                _openScanScreen,
-                            icon: const Icon(
-                              Icons.radar,
-                            ),
-                            label: const Text(
-                              'فتح شاشة المسح',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight:
-                                    FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 20),
-
-                // ==================================================
-                // ملاحظة
-                // ==================================================
-
-                Container(
-                  padding:
-                      const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.amber
-                        .withOpacity(0.04),
-                    borderRadius:
-                        BorderRadius.circular(14),
-                    border: Border.all(
-                      color: Colors.amber
-                          .withOpacity(0.12),
-                    ),
-                  ),
-                  child: const Text(
-                    'ملاحظة: يجب أن يكون جهاز ESP32 يعمل ويستخدم خدمة Bluetooth بنفس UUID الخاصة بتطبيق GeoScan AI حتى يتم الاتصال واستقبال البيانات.',
-                    textAlign:
-                        TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 11,
-                    ),
-                  ),
+                Expanded(
+                  child: _deviceList(),
                 ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _connectionCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101827),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: _connected
+              ? Colors.greenAccent.withOpacity(0.45)
+              : Colors.white10,
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            _connected
+                ? Icons.bluetooth_connected
+                : Icons.bluetooth_disabled,
+            size: 48,
+            color: _connected
+                ? Colors.greenAccent
+                : Colors.white54,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _connected
+                ? 'متصل'
+                : 'غير متصل',
+            style: TextStyle(
+              color: _connected
+                  ? Colors.greenAccent
+                  : Colors.white70,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _connected
+                ? _connectedDevice
+                : _status,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white60,
+              fontSize: 15,
+            ),
+          ),
+          if (_connected) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _disconnect,
+                icon: const Icon(Icons.link_off),
+                label: const Text('فصل ESP32'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _scanButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton.icon(
+        onPressed: (_scanning || _connecting)
+            ? null
+            : _startScan,
+        icon: _scanning
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              )
+            : const Icon(Icons.bluetooth_searching),
+        label: Text(
+          _scanning
+              ? 'جاري البحث...'
+              : 'البحث عن ESP32',
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _deviceList() {
+    if (_scanning) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text(
+              'جاري البحث عن الأجهزة...',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_devices.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.bluetooth_searching,
+              size: 70,
+              color: Colors.white24,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'لا توجد أجهزة مكتشفة',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'شغّل ESP32 ثم اضغط البحث',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final sortedDevices = [..._devices];
+
+    sortedDevices.sort((a, b) {
+      final aGeo = _isGeoScanDevice(a);
+      final bGeo = _isGeoScanDevice(b);
+
+      if (aGeo && !bGeo) return -1;
+      if (!aGeo && bGeo) return 1;
+
+      return b.rssi.compareTo(a.rssi);
+    });
+
+    return ListView.separated(
+      itemCount: sortedDevices.length,
+      separatorBuilder: (_, __) =>
+          const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final result = sortedDevices[index];
+        final name = _deviceName(result);
+        final isGeoScan = _isGeoScanDevice(result);
+
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF101827),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: isGeoScan
+                  ? Colors.blueAccent.withOpacity(0.5)
+                  : Colors.white10,
+            ),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
+            leading: CircleAvatar(
+              radius: 25,
+              backgroundColor: isGeoScan
+                  ? Colors.blueAccent.withOpacity(0.15)
+                  : Colors.white10,
+              child: Icon(
+                Icons.memory,
+                color: isGeoScan
+                    ? Colors.blueAccent
+                    : Colors.white54,
+              ),
+            ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                if (isGeoScan)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'GeoScan',
+                      style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '${result.device.remoteId.str}\nالإشارة: ${result.rssi} dBm',
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            trailing: ElevatedButton(
+              onPressed: _connecting
+                  ? null
+                  : () => _connect(result.device),
+              child: const Text('اتصال'),
+            ),
+          ),
+        );
+      },
     );
   }
 }
