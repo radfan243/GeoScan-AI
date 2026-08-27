@@ -32,6 +32,8 @@ class _ScanScreenState extends State<ScanScreen>
   bool soundEnabled = true;
   bool vibrationEnabled = true;
 
+  double filterStrength = 50;
+
   String selectedTarget = 'ذهب';
 
   final List<double> history = [];
@@ -68,8 +70,7 @@ class _ScanScreenState extends State<ScanScreen>
         _bluetoothService.signalStream.listen((value) {
       if (!mounted) return;
 
-      final newValue =
-          value.clamp(0.0, 100.0).toDouble();
+      final newValue = value.clamp(0.0, 100.0).toDouble();
 
       setState(() {
         signal = newValue;
@@ -91,19 +92,17 @@ class _ScanScreenState extends State<ScanScreen>
 
   void _listenToConnection() {
     _connectionSubscription =
-        _bluetoothService.connectionStream.listen(
-      (connected) {
-        if (!mounted) return;
+        _bluetoothService.connectionStream.listen((connected) {
+      if (!mounted) return;
 
-        if (!connected && scanning) {
-          setState(() {
-            scanning = false;
-          });
-        }
+      if (!connected && scanning) {
+        setState(() {
+          scanning = false;
+        });
+      }
 
-        setState(() {});
-      },
-    );
+      setState(() {});
+    });
   }
 
   double _calculateStability() {
@@ -116,8 +115,7 @@ class _ScanScreenState extends State<ScanScreen>
         : history;
 
     final average =
-        recent.reduce((a, b) => a + b) /
-            recent.length;
+        recent.reduce((a, b) => a + b) / recent.length;
 
     final variance = recent
             .map(
@@ -170,23 +168,26 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   // ============================================================
-  // TARGET VALUES
-  //
-  // هذه مؤشرات بصرية فقط وليست إثباتًا لنوع المعدن.
+  // TARGET
   // ============================================================
 
   double _targetValue(String target) {
     switch (target) {
       case 'ذهب':
         return signal;
+
       case 'نحاس':
         return signal * .62;
+
       case 'فضة':
         return signal * .37;
+
       case 'حديد':
         return signal * .22;
+
       case 'ماء':
         return signal * .75;
+
       default:
         return signal;
     }
@@ -196,14 +197,19 @@ class _ScanScreenState extends State<ScanScreen>
     switch (target) {
       case 'ذهب':
         return Colors.greenAccent;
+
       case 'نحاس':
         return Colors.orangeAccent;
+
       case 'فضة':
         return Colors.lightBlueAccent;
+
       case 'حديد':
         return Colors.redAccent;
+
       case 'ماء':
         return Colors.cyanAccent;
+
       default:
         return Colors.white;
     }
@@ -213,14 +219,19 @@ class _ScanScreenState extends State<ScanScreen>
     switch (target) {
       case 'ذهب':
         return Icons.diamond;
+
       case 'نحاس':
         return Icons.layers;
+
       case 'فضة':
         return Icons.hexagon;
+
       case 'حديد':
         return Icons.circle;
+
       case 'ماء':
         return Icons.water_drop;
+
       default:
         return Icons.circle;
     }
@@ -234,9 +245,7 @@ class _ScanScreenState extends State<ScanScreen>
     if (scanning) return;
 
     if (!_bluetoothService.isConnected) {
-      _showMessage(
-        'يجب الاتصال بجهاز ESP32 أولاً',
-      );
+      _showMessage('يجب الاتصال بجهاز ESP32 أولاً');
       return;
     }
 
@@ -254,13 +263,9 @@ class _ScanScreenState extends State<ScanScreen>
         stability = 0;
       });
 
-      _showMessage(
-        'بدأ المسح الحقيقي من ESP32',
-      );
+      _showMessage('بدأ المسح الحقيقي من ESP32');
     } else {
-      _showMessage(
-        'تعذر بدء المسح',
-      );
+      _showMessage('تعذر بدء المسح');
     }
   }
 
@@ -281,13 +286,9 @@ class _ScanScreenState extends State<ScanScreen>
     });
 
     if (success) {
-      _showMessage(
-        'تم إيقاف المسح',
-      );
+      _showMessage('تم إيقاف المسح');
     } else {
-      _showMessage(
-        'تم إيقاف المسح محليًا',
-      );
+      _showMessage('تم إيقاف المسح محليًا');
     }
   }
 
@@ -295,23 +296,17 @@ class _ScanScreenState extends State<ScanScreen>
   // TARGET
   // ============================================================
 
-  Future<void> _selectTarget(
-    String target,
-  ) async {
+  Future<void> _selectTarget(String target) async {
     setState(() {
       selectedTarget = target;
     });
 
     if (_bluetoothService.isConnected) {
       final success =
-          await _bluetoothService.setTarget(
-        target,
-      );
+          await _bluetoothService.setTarget(target);
 
       if (!success && mounted) {
-        _showMessage(
-          'تعذر إرسال الهدف إلى ESP32',
-        );
+        _showMessage('تعذر إرسال الهدف إلى ESP32');
       }
     }
   }
@@ -322,25 +317,23 @@ class _ScanScreenState extends State<ScanScreen>
 
   void _saveReading() {
     if (signal <= 0) {
-      _showMessage(
-        'لا توجد قراءة لحفظها',
-      );
+      _showMessage('لا توجد قراءة لحفظها');
       return;
     }
 
-    savedReadings.add({
-      'signal': signal,
-      'stability': stability,
-      'peak': peak,
-      'target': selectedTarget,
-      'time': DateTime.now(),
+    setState(() {
+      savedReadings.add({
+        'signal': signal,
+        'stability': stability,
+        'peak': peak,
+        'target': selectedTarget,
+        'time': DateTime.now(),
+      });
     });
 
     HapticFeedback.mediumImpact();
 
-    _showMessage(
-      'تم حفظ القراءة بنجاح',
-    );
+    _showMessage('تم حفظ القراءة بنجاح');
   }
 
   // ============================================================
@@ -355,9 +348,7 @@ class _ScanScreenState extends State<ScanScreen>
       history.clear();
     });
 
-    _showMessage(
-      'تم تصفير القراءة',
-    );
+    _showMessage('تم تصفير القراءة');
   }
 
   // ============================================================
@@ -370,9 +361,7 @@ class _ScanScreenState extends State<ScanScreen>
     });
 
     if (soundEnabled) {
-      SystemSound.play(
-        SystemSoundType.alert,
-      );
+      SystemSound.play(SystemSoundType.alert);
     }
 
     _showMessage(
@@ -388,8 +377,7 @@ class _ScanScreenState extends State<ScanScreen>
 
   void _toggleVibration() {
     setState(() {
-      vibrationEnabled =
-          !vibrationEnabled;
+      vibrationEnabled = !vibrationEnabled;
     });
 
     if (vibrationEnabled) {
@@ -410,31 +398,25 @@ class _ScanScreenState extends State<ScanScreen>
   void _openMenu() {
     showModalBottomSheet(
       context: context,
-      backgroundColor:
-          const Color(0xFF07121F),
-      shape:
-          const RoundedRectangleBorder(
+      backgroundColor: const Color(0xFF07121F),
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
           top: Radius.circular(25),
         ),
       ),
       builder: (context) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: SafeArea(
             child: Padding(
-              padding:
-                  const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(18),
               child: Column(
-                mainAxisSize:
-                    MainAxisSize.min,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
                     width: 45,
                     height: 5,
-                    decoration:
-                        BoxDecoration(
+                    decoration: BoxDecoration(
                       color: Colors.white24,
                       borderRadius:
                           BorderRadius.circular(10),
@@ -446,11 +428,12 @@ class _ScanScreenState extends State<ScanScreen>
                   ListTile(
                     leading: const Icon(
                       Icons.bluetooth,
-                      color:
-                          Colors.cyanAccent,
+                      color: Colors.cyanAccent,
                     ),
                     title: const Text(
                       'الاتصال بجهاز ESP32',
+                      style:
+                          TextStyle(color: Colors.white),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -468,11 +451,12 @@ class _ScanScreenState extends State<ScanScreen>
                   ListTile(
                     leading: const Icon(
                       Icons.refresh,
-                      color:
-                          Colors.greenAccent,
+                      color: Colors.greenAccent,
                     ),
                     title: const Text(
                       'تصفير القراءة',
+                      style:
+                          TextStyle(color: Colors.white),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -483,11 +467,12 @@ class _ScanScreenState extends State<ScanScreen>
                   ListTile(
                     leading: const Icon(
                       Icons.save,
-                      color:
-                          Colors.amberAccent,
+                      color: Colors.amberAccent,
                     ),
                     title: const Text(
                       'حفظ القراءة الحالية',
+                      style:
+                          TextStyle(color: Colors.white),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -502,6 +487,8 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     title: const Text(
                       'حول GeoScan AI',
+                      style:
+                          TextStyle(color: Colors.white),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -526,34 +513,33 @@ class _ScanScreenState extends State<ScanScreen>
       context: context,
       builder: (context) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: AlertDialog(
-            backgroundColor:
-                const Color(0xFF07121F),
+            backgroundColor: const Color(0xFF07121F),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
             title: const Text(
               'خيارات المسح',
+              style: TextStyle(color: Colors.white),
             ),
             content: Column(
-              mainAxisSize:
-                  MainAxisSize.min,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _dialogAction(
                   Icons.volume_up,
                   'التنبيه الصوتي',
-                  soundEnabled
-                      ? 'يعمل'
-                      : 'متوقف',
+                  soundEnabled ? 'يعمل' : 'متوقف',
                   _toggleSound,
                 ),
+
                 _dialogAction(
                   Icons.vibration,
                   'الاهتزاز',
-                  vibrationEnabled
-                      ? 'يعمل'
-                      : 'متوقف',
+                  vibrationEnabled ? 'يعمل' : 'متوقف',
                   _toggleVibration,
                 ),
+
                 _dialogAction(
                   Icons.delete_sweep,
                   'تصفير البيانات',
@@ -564,12 +550,13 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed:
-                    () => Navigator.pop(
-                  context,
-                ),
+                onPressed: () =>
+                    Navigator.pop(context),
                 child: const Text(
                   'إغلاق',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                  ),
                 ),
               ),
             ],
@@ -590,7 +577,12 @@ class _ScanScreenState extends State<ScanScreen>
         icon,
         color: Colors.cyanAccent,
       ),
-      title: Text(title),
+      title: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+        ),
+      ),
       subtitle: Text(
         subtitle,
         style: const TextStyle(
@@ -613,13 +605,14 @@ class _ScanScreenState extends State<ScanScreen>
       context: context,
       builder: (context) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: AlertDialog(
-            backgroundColor:
-                const Color(0xFF07121F),
+            backgroundColor: const Color(0xFF07121F),
             title: const Text(
               'GeoScan AI',
+              style: TextStyle(
+                color: Colors.white,
+              ),
             ),
             content: const Text(
               'نظام تحليل إشارات يعمل مع جهاز ESP32 الخارجي عبر Bluetooth.\n\n'
@@ -631,12 +624,13 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed:
-                    () => Navigator.pop(
-                  context,
-                ),
+                onPressed: () =>
+                    Navigator.pop(context),
                 child: const Text(
                   'حسنًا',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                  ),
                 ),
               ),
             ],
@@ -650,24 +644,19 @@ class _ScanScreenState extends State<ScanScreen>
   // MESSAGE
   // ============================================================
 
-  void _showMessage(
-    String message,
-  ) {
+  void _showMessage(String message) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
         .hideCurrentSnackBar();
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           message,
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
         ),
-        behavior:
-            SnackBarBehavior.floating,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -677,28 +666,21 @@ class _ScanScreenState extends State<ScanScreen>
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF020711),
-
+      backgroundColor: const Color(0xFF020711),
       body: SafeArea(
         child: Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: Column(
             children: [
               _buildHeader(),
 
               Expanded(
-                child:
-                    SingleChildScrollView(
+                child: SingleChildScrollView(
                   physics:
                       const BouncingScrollPhysics(),
-                  padding:
-                      const EdgeInsets.fromLTRB(
+                  padding: const EdgeInsets.fromLTRB(
                     16,
                     5,
                     16,
@@ -708,33 +690,23 @@ class _ScanScreenState extends State<ScanScreen>
                     children: [
                       _buildScanner(),
 
-                      const SizedBox(
-                        height: 8,
-                      ),
+                      const SizedBox(height: 8),
 
                       _buildMeter(),
 
-                      const SizedBox(
-                        height: 14,
-                      ),
+                      const SizedBox(height: 14),
 
                       _buildAnalysisArea(),
 
-                      const SizedBox(
-                        height: 14,
-                      ),
+                      const SizedBox(height: 14),
 
                       _buildLikelyTarget(),
 
-                      const SizedBox(
-                        height: 14,
-                      ),
+                      const SizedBox(height: 14),
 
                       _buildStatusCards(),
 
-                      const SizedBox(
-                        height: 14,
-                      ),
+                      const SizedBox(height: 14),
 
                       _buildMainButtons(),
                     ],
@@ -761,11 +733,8 @@ class _ScanScreenState extends State<ScanScreen>
     return Container(
       height: 88,
       padding:
-          const EdgeInsets.symmetric(
-        horizontal: 8,
-      ),
-      decoration:
-          const BoxDecoration(
+          const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
         color: Color(0xFF020711),
         border: Border(
           bottom: BorderSide(
@@ -790,37 +759,30 @@ class _ScanScreenState extends State<ScanScreen>
                   MainAxisAlignment.center,
               children: [
                 ShaderMask(
-                  shaderCallback:
-                      (bounds) {
+                  shaderCallback: (bounds) {
                     return const LinearGradient(
                       colors: [
                         Colors.white,
                         Color(0xFF8ED8FF),
                       ],
-                    ).createShader(
-                      bounds,
-                    );
+                    ).createShader(bounds);
                   },
                   child: const Text(
                     'GeoScan AI',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 26,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
 
-                const SizedBox(
-                  height: 1,
-                ),
+                const SizedBox(height: 1),
 
                 const Text(
                   'المسح المباشر',
                   style: TextStyle(
-                    color:
-                        Colors.white70,
+                    color: Colors.white70,
                     fontSize: 15,
                   ),
                 ),
@@ -840,9 +802,7 @@ class _ScanScreenState extends State<ScanScreen>
                 size: 29,
               ),
 
-              const SizedBox(
-                width: 4,
-              ),
+              const SizedBox(width: 4),
 
               Text(
                 connected
@@ -853,8 +813,7 @@ class _ScanScreenState extends State<ScanScreen>
                       ? Colors.greenAccent
                       : Colors.redAccent,
                   fontSize: 15,
-                  fontWeight:
-                      FontWeight.bold,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -881,23 +840,18 @@ class _ScanScreenState extends State<ScanScreen>
     return SizedBox(
       height: 345,
       child: Stack(
-        alignment:
-            Alignment.center,
+        alignment: Alignment.center,
         children: [
           AnimatedBuilder(
-            animation:
-                _radarController,
-            builder:
-                (context, child) {
+            animation: _radarController,
+            builder: (context, child) {
               return CustomPaint(
                 size: const Size(
                   double.infinity,
                   345,
                 ),
-                painter:
-                    _RadarBackgroundPainter(
-                  progress:
-                      _radarController.value,
+                painter: _RadarBackgroundPainter(
+                  progress: _radarController.value,
                 ),
               );
             },
@@ -923,28 +877,22 @@ class _ScanScreenState extends State<ScanScreen>
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 25,
-                    fontWeight:
-                        FontWeight.bold,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
 
-                const SizedBox(
-                  height: 13,
-                ),
+                const SizedBox(height: 13),
 
                 Text(
                   '${signal.toStringAsFixed(1)}%',
                   style: TextStyle(
                     color: signalColor,
                     fontSize: 58,
-                    fontWeight:
-                        FontWeight.w300,
+                    fontWeight: FontWeight.w300,
                   ),
                 ),
 
-                const SizedBox(
-                  height: 2,
-                ),
+                const SizedBox(height: 2),
 
                 Row(
                   children: [
@@ -953,14 +901,13 @@ class _ScanScreenState extends State<ScanScreen>
                       color: signalColor,
                       size: 21,
                     ),
-                    const SizedBox(
-                      width: 6,
-                    ),
+
+                    const SizedBox(width: 6),
+
                     Text(
                       'إشارة $signalStatus',
                       style: TextStyle(
-                        color:
-                            signalColor,
+                        color: signalColor,
                         fontSize: 16,
                         fontWeight:
                             FontWeight.bold,
@@ -987,8 +934,7 @@ class _ScanScreenState extends State<ScanScreen>
           Positioned(
             right: 0,
             top: 178,
-            child:
-                _buildStabilityCard(),
+            child: _buildStabilityCard(),
           ),
         ],
       ),
@@ -1010,14 +956,11 @@ class _ScanScreenState extends State<ScanScreen>
             style: TextStyle(
               color: Colors.white,
               fontSize: 17,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
             ),
           ),
 
-          const SizedBox(
-            height: 11,
-          ),
+          const SizedBox(height: 11),
 
           SizedBox(
             height: 48,
@@ -1026,53 +969,38 @@ class _ScanScreenState extends State<ScanScreen>
                   MainAxisAlignment.center,
               crossAxisAlignment:
                   CrossAxisAlignment.end,
-              children:
-                  List.generate(
+              children: List.generate(
                 5,
                 (index) {
                   final active =
-                      signal >=
-                          ((index + 1) *
-                              20);
+                      signal >= ((index + 1) * 20);
 
                   return AnimatedContainer(
-                    duration:
-                        const Duration(
+                    duration: const Duration(
                       milliseconds: 200,
                     ),
                     width: 9,
-                    height:
-                        15.0 +
-                            index * 8,
+                    height: 15.0 + index * 8,
                     margin:
-                        const EdgeInsets
-                            .symmetric(
+                        const EdgeInsets.symmetric(
                       horizontal: 4,
                     ),
-                    decoration:
-                        BoxDecoration(
+                    decoration: BoxDecoration(
                       color: active
                           ? Colors.greenAccent
                           : Colors.white12,
                       borderRadius:
-                          BorderRadius
-                              .circular(
-                        5,
-                      ),
-                      boxShadow:
-                          active
-                              ? [
-                                  BoxShadow(
-                                    color: Colors
-                                        .greenAccent
-                                        .withOpacity(
-                                      .35,
-                                    ),
-                                    blurRadius:
-                                        8,
-                                  ),
-                                ]
-                              : null,
+                          BorderRadius.circular(5),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: Colors
+                                    .greenAccent
+                                    .withOpacity(.35),
+                                blurRadius: 8,
+                              ),
+                            ]
+                          : null,
                     ),
                   );
                 },
@@ -1080,18 +1008,14 @@ class _ScanScreenState extends State<ScanScreen>
             ),
           ),
 
-          const SizedBox(
-            height: 7,
-          ),
+          const SizedBox(height: 7),
 
           Text(
             '${signal.toStringAsFixed(1)}%',
             style: const TextStyle(
-              color:
-                  Colors.greenAccent,
+              color: Colors.greenAccent,
               fontSize: 27,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
             ),
           ),
 
@@ -1126,9 +1050,7 @@ class _ScanScreenState extends State<ScanScreen>
                 color: Colors.white,
                 size: 23,
               ),
-              SizedBox(
-                width: 7,
-              ),
+              SizedBox(width: 7),
               Text(
                 'العمق التقديري',
                 style: TextStyle(
@@ -1139,17 +1061,14 @@ class _ScanScreenState extends State<ScanScreen>
             ],
           ),
 
-          const SizedBox(
-            height: 7,
-          ),
+          const SizedBox(height: 7),
 
           const Text(
             '-- m',
             style: TextStyle(
               color: Colors.greenAccent,
               fontSize: 28,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
@@ -1176,9 +1095,7 @@ class _ScanScreenState extends State<ScanScreen>
                 color: Colors.white,
                 size: 23,
               ),
-              SizedBox(
-                width: 7,
-              ),
+              SizedBox(width: 7),
               Text(
                 'استقرار الإشارة',
                 style: TextStyle(
@@ -1189,17 +1106,14 @@ class _ScanScreenState extends State<ScanScreen>
             ],
           ),
 
-          const SizedBox(
-            height: 7,
-          ),
+          const SizedBox(height: 7),
 
           Text(
             '${stability.toStringAsFixed(0)}%',
             style: const TextStyle(
               color: Colors.greenAccent,
               fontSize: 28,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
@@ -1215,22 +1129,17 @@ class _ScanScreenState extends State<ScanScreen>
     return Container(
       width: width,
       height: height,
-      padding:
-          const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color:
-            const Color(0xFF07121F)
-                .withOpacity(.90),
-        borderRadius:
-            BorderRadius.circular(18),
+        color: const Color(0xFF07121F)
+            .withOpacity(.90),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: Colors.cyanAccent
-              .withOpacity(.25),
+          color: Colors.cyanAccent.withOpacity(.25),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black
-                .withOpacity(.25),
+            color: Colors.black.withOpacity(.25),
             blurRadius: 14,
           ),
         ],
@@ -1245,19 +1154,15 @@ class _ScanScreenState extends State<ScanScreen>
 
   Widget _buildMeter() {
     return Container(
-      padding:
-          const EdgeInsets.fromLTRB(
+      padding: const EdgeInsets.fromLTRB(
         10,
         6,
         10,
         12,
       ),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF06101C),
-        borderRadius:
-            BorderRadius.circular(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF06101C),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: Colors.white10,
         ),
@@ -1266,115 +1171,87 @@ class _ScanScreenState extends State<ScanScreen>
         children: [
           Row(
             mainAxisAlignment:
-                MainAxisAlignment
-                    .spaceAround,
+                MainAxisAlignment.spaceAround,
             children: const [
               Text(
                 '0',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
               Text(
                 '20',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
               Text(
                 '40',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
               Text(
                 '60',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
               Text(
                 '80',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
               Text(
                 '100',
                 style: TextStyle(
-                  color:
-                      Colors.white70,
+                  color: Colors.white70,
                 ),
               ),
             ],
           ),
 
-          const SizedBox(
-            height: 5,
-          ),
+          const SizedBox(height: 5),
 
           SizedBox(
             height: 27,
             child: Row(
-              children:
-                  List.generate(
+              children: List.generate(
                 40,
                 (index) {
-                  final value =
-                      index * 2.5;
+                  final value = index * 2.5;
 
                   Color color;
 
                   if (value < 25) {
-                    color =
-                        Colors.redAccent;
-                  } else if (value <
-                      50) {
-                    color =
-                        Colors.orange;
-                  } else if (value <
-                      75) {
-                    color =
-                        Colors.amber;
+                    color = Colors.redAccent;
+                  } else if (value < 50) {
+                    color = Colors.orange;
+                  } else if (value < 75) {
+                    color = Colors.amber;
                   } else {
-                    color =
-                        Colors.greenAccent;
+                    color = Colors.greenAccent;
                   }
 
-                  final active =
-                      signal >= value;
+                  final active = signal >= value;
 
                   return Expanded(
-                    child:
-                        AnimatedContainer(
+                    child: AnimatedContainer(
                       duration:
                           const Duration(
-                        milliseconds:
-                            120,
+                        milliseconds: 120,
                       ),
                       margin:
-                          const EdgeInsets
-                              .symmetric(
+                          const EdgeInsets.symmetric(
                         horizontal: 1,
                       ),
-                      decoration:
-                          BoxDecoration(
+                      decoration: BoxDecoration(
                         color: active
                             ? color
-                            : color
-                                .withOpacity(
-                                .12,
-                              ),
+                            : color.withOpacity(.12),
                         borderRadius:
-                            BorderRadius
-                                .circular(
-                          3,
-                        ),
+                            BorderRadius.circular(3),
                       ),
                     ),
                   );
@@ -1383,40 +1260,31 @@ class _ScanScreenState extends State<ScanScreen>
             ),
           ),
 
-          const SizedBox(
-            height: 5,
-          ),
+          const SizedBox(height: 5),
 
           Row(
             mainAxisAlignment:
-                MainAxisAlignment
-                    .spaceAround,
+                MainAxisAlignment.spaceAround,
             children: const [
               Text(
                 'ضعيفة',
                 style: TextStyle(
-                  color:
-                      Colors.redAccent,
-                  fontWeight:
-                      FontWeight.bold,
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
               Text(
                 'متوسطة',
                 style: TextStyle(
-                  color:
-                      Colors.orangeAccent,
-                  fontWeight:
-                      FontWeight.bold,
+                  color: Colors.orangeAccent,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
               Text(
                 'قوية',
                 style: TextStyle(
-                  color:
-                      Colors.greenAccent,
-                  fontWeight:
-                      FontWeight.bold,
+                  color: Colors.greenAccent,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -1440,9 +1308,7 @@ class _ScanScreenState extends State<ScanScreen>
           child: _buildGraph(),
         ),
 
-        const SizedBox(
-          width: 10,
-        ),
+        const SizedBox(width: 10),
 
         Expanded(
           flex: 4,
@@ -1455,14 +1321,10 @@ class _ScanScreenState extends State<ScanScreen>
   Widget _buildGraph() {
     return Container(
       height: 325,
-      padding:
-          const EdgeInsets.all(12),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF07121F),
-        borderRadius:
-            BorderRadius.circular(18),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07121F),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: Colors.white10,
         ),
@@ -1476,23 +1338,18 @@ class _ScanScreenState extends State<ScanScreen>
             style: TextStyle(
               color: Colors.white,
               fontSize: 18,
-              fontWeight:
-                  FontWeight.bold,
+              fontWeight: FontWeight.bold,
             ),
           ),
 
-          const SizedBox(
-            height: 8,
-          ),
+          const SizedBox(height: 8),
 
           Expanded(
             child: CustomPaint(
-              painter:
-                  _SignalGraphPainter(
+              painter: _SignalGraphPainter(
                 values: history,
               ),
-              child:
-                  const SizedBox.expand(),
+              child: const SizedBox.expand(),
             ),
           ),
         ],
@@ -1503,14 +1360,10 @@ class _ScanScreenState extends State<ScanScreen>
   Widget _buildTargetAnalysis() {
     return Container(
       height: 325,
-      padding:
-          const EdgeInsets.all(10),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF07121F),
-        borderRadius:
-            BorderRadius.circular(18),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07121F),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: Colors.white10,
         ),
@@ -1525,41 +1378,32 @@ class _ScanScreenState extends State<ScanScreen>
                 child: Text(
                   'تحليل الهدف',
                   style: TextStyle(
-                    color:
-                        Colors.white,
+                    color: Colors.white,
                     fontSize: 18,
-                    fontWeight:
-                        FontWeight.bold,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
+
               IconButton(
-                onPressed:
-                    _showAnalysisInfo,
+                onPressed: _showAnalysisInfo,
                 icon: const Icon(
                   Icons.help_outline,
-                  color:
-                      Colors.white60,
+                  color: Colors.white60,
                 ),
                 iconSize: 22,
               ),
             ],
           ),
 
-          const SizedBox(
-            height: 3,
-          ),
+          const SizedBox(height: 3),
 
           Expanded(
             child: Column(
-              children:
-                  targets.map(
+              children: targets.map(
                 (target) {
                   return Expanded(
-                    child:
-                        _targetRow(
-                      target,
-                    ),
+                    child: _targetRow(target),
                   );
                 },
               ).toList(),
@@ -1570,54 +1414,41 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _targetRow(
-    String target,
-  ) {
-    final value =
-        _targetValue(target)
-            .clamp(0.0, 100.0)
-            .toDouble();
+  Widget _targetRow(String target) {
+    final value = _targetValue(target)
+        .clamp(0.0, 100.0)
+        .toDouble();
 
-    final color =
-        _targetColor(target);
+    final color = _targetColor(target);
 
     return Container(
-      margin:
-          const EdgeInsets.only(
+      margin: const EdgeInsets.only(
         bottom: 5,
       ),
-      padding:
-          const EdgeInsets.symmetric(
+      padding: const EdgeInsets.symmetric(
         horizontal: 8,
         vertical: 5,
       ),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF081522),
+      decoration: BoxDecoration(
+        color: const Color(0xFF081522),
         borderRadius:
             BorderRadius.circular(12),
         border: Border.all(
-          color:
-              selectedTarget == target
-                  ? color.withOpacity(.55)
-                  : Colors.white10,
+          color: selectedTarget == target
+              ? color.withOpacity(.55)
+              : Colors.white10,
         ),
       ),
       child: GestureDetector(
-        onTap: () =>
-            _selectTarget(target),
+        onTap: () => _selectTarget(target),
         child: Row(
           children: [
             Container(
               width: 35,
               height: 35,
-              decoration:
-                  BoxDecoration(
-                color:
-                    color.withOpacity(.10),
-                shape:
-                    BoxShape.circle,
+              decoration: BoxDecoration(
+                color: color.withOpacity(.10),
+                shape: BoxShape.circle,
               ),
               child: Icon(
                 _targetIcon(target),
@@ -1626,51 +1457,37 @@ class _ScanScreenState extends State<ScanScreen>
               ),
             ),
 
-            const SizedBox(
-              width: 7,
-            ),
+            const SizedBox(width: 7),
 
             Expanded(
               child: Column(
                 crossAxisAlignment:
-                    CrossAxisAlignment
-                        .start,
+                    CrossAxisAlignment.start,
                 mainAxisAlignment:
-                    MainAxisAlignment
-                        .center,
+                    MainAxisAlignment.center,
                 children: [
                   Text(
                     target,
-                    style:
-                        const TextStyle(
-                      color:
-                          Colors.white,
+                    style: const TextStyle(
+                      color: Colors.white,
                       fontSize: 14,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
 
-                  const SizedBox(
-                    height: 5,
-                  ),
+                  const SizedBox(height: 5),
 
                   ClipRRect(
                     borderRadius:
-                        BorderRadius
-                            .circular(
-                      10,
-                    ),
+                        BorderRadius.circular(10),
                     child:
                         LinearProgressIndicator(
                       minHeight: 7,
-                      value:
-                          value / 100,
+                      value: value / 100,
                       backgroundColor:
                           Colors.white10,
                       valueColor:
-                          AlwaysStoppedAnimation<
-                              Color>(
+                          AlwaysStoppedAnimation<Color>(
                         color,
                       ),
                     ),
@@ -1679,17 +1496,14 @@ class _ScanScreenState extends State<ScanScreen>
               ),
             ),
 
-            const SizedBox(
-              width: 7,
-            ),
+            const SizedBox(width: 7),
 
             Text(
               '${value.toStringAsFixed(0)}%',
               style: TextStyle(
                 color: color,
                 fontSize: 14,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
@@ -1703,13 +1517,15 @@ class _ScanScreenState extends State<ScanScreen>
       context: context,
       builder: (context) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: AlertDialog(
             backgroundColor:
                 const Color(0xFF07121F),
             title: const Text(
               'معلومة مهمة',
+              style: TextStyle(
+                color: Colors.white,
+              ),
             ),
             content: const Text(
               'النسب الموجودة في تحليل الهدف حاليًا هي مؤشرات مبنية على قوة الإشارة فقط.\n\n'
@@ -1721,12 +1537,13 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed:
-                    () => Navigator.pop(
-                  context,
-                ),
+                onPressed: () =>
+                    Navigator.pop(context),
                 child: const Text(
                   'حسنًا',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                  ),
                 ),
               ),
             ],
@@ -1741,32 +1558,24 @@ class _ScanScreenState extends State<ScanScreen>
   // ============================================================
 
   Widget _buildLikelyTarget() {
-    final value =
-        _targetValue(
+    final value = _targetValue(
       selectedTarget,
     ).clamp(0.0, 100.0).toDouble();
 
     final color =
-        _targetColor(
-      selectedTarget,
-    );
+        _targetColor(selectedTarget);
 
-    final strong =
-        value >= 75;
+    final strong = value >= 75;
 
     return Container(
       width: double.infinity,
-      padding:
-          const EdgeInsets.all(15),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF07121F),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07121F),
         borderRadius:
             BorderRadius.circular(20),
         border: Border.all(
-          color:
-              color.withOpacity(.25),
+          color: color.withOpacity(.25),
         ),
       ),
       child: Row(
@@ -1774,48 +1583,36 @@ class _ScanScreenState extends State<ScanScreen>
           Container(
             width: 105,
             height: 105,
-            decoration:
-                BoxDecoration(
-              shape:
-                  BoxShape.circle,
-              color:
-                  color.withOpacity(.07),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withOpacity(.07),
               border: Border.all(
-                color:
-                    color.withOpacity(.25),
+                color: color.withOpacity(.25),
               ),
             ),
             child: Icon(
-              _targetIcon(
-                selectedTarget,
-              ),
+              _targetIcon(selectedTarget),
               color: color,
               size: 58,
             ),
           ),
 
-          const SizedBox(
-            width: 16,
-          ),
+          const SizedBox(width: 16),
 
           Expanded(
             child: Column(
               crossAxisAlignment:
-                  CrossAxisAlignment
-                      .start,
+                  CrossAxisAlignment.start,
               children: [
                 const Text(
                   'نوع الهدف المحتمل',
                   style: TextStyle(
-                    color:
-                        Colors.white70,
+                    color: Colors.white70,
                     fontSize: 16,
                   ),
                 ),
 
-                const SizedBox(
-                  height: 4,
-                ),
+                const SizedBox(height: 4),
 
                 Text(
                   strong
@@ -1824,53 +1621,41 @@ class _ScanScreenState extends State<ScanScreen>
                   style: TextStyle(
                     color: color,
                     fontSize: 24,
-                    fontWeight:
-                        FontWeight.bold,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
 
-                const SizedBox(
-                  height: 2,
-                ),
+                const SizedBox(height: 2),
 
                 Row(
                   children: [
                     Text(
                       '${value.toStringAsFixed(0)}%',
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.greenAccent,
+                      style: const TextStyle(
+                        color: Colors.greenAccent,
                         fontSize: 25,
-                        fontWeight:
-                            FontWeight.bold,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
 
-                    const SizedBox(
-                      width: 10,
-                    ),
+                    const SizedBox(width: 10),
 
                     const Text(
                       'مؤشر',
                       style: TextStyle(
-                        color:
-                            Colors.white54,
+                        color: Colors.white54,
                         fontSize: 15,
                       ),
                     ),
                   ],
                 ),
 
-                const SizedBox(
-                  height: 4,
-                ),
+                const SizedBox(height: 4),
 
                 const Text(
                   'تأكيد النتيجة بالحفر والاختبار الميداني مطلوب.',
                   style: TextStyle(
-                    color:
-                        Colors.white54,
+                    color: Colors.white54,
                     fontSize: 12,
                   ),
                 ),
@@ -1895,20 +1680,16 @@ class _ScanScreenState extends State<ScanScreen>
             child: _statusCard(
               Icons.monitor_heart,
               'حالة الجهاز',
-              _bluetoothService
-                      .isConnected
+              _bluetoothService.isConnected
                   ? 'مستقر'
                   : 'غير متصل',
-              _bluetoothService
-                      .isConnected
+              _bluetoothService.isConnected
                   ? Colors.greenAccent
                   : Colors.redAccent,
             ),
           ),
 
-          const SizedBox(
-            width: 6,
-          ),
+          const SizedBox(width: 6),
 
           Expanded(
             child: _statusCard(
@@ -1919,43 +1700,33 @@ class _ScanScreenState extends State<ScanScreen>
             ),
           ),
 
-          const SizedBox(
-            width: 6,
-          ),
+          const SizedBox(width: 6),
 
           Expanded(
             child: _statusCard(
               Icons.filter_alt_outlined,
               'الفلترة',
-              'متوسطة',
+              '${filterStrength.toStringAsFixed(0)}%',
               Colors.cyanAccent,
-              onTap:
-                  _showFilterDialog,
+              onTap: _showFilterDialog,
             ),
           ),
 
-          const SizedBox(
-            width: 6,
-          ),
+          const SizedBox(width: 6),
 
           Expanded(
             child: _statusCard(
               Icons.volume_up,
               'التنبيه الصوتي',
-              soundEnabled
-                  ? 'يعمل'
-                  : 'متوقف',
+              soundEnabled ? 'يعمل' : 'متوقف',
               soundEnabled
                   ? Colors.greenAccent
                   : Colors.white54,
-              onTap:
-                  _toggleSound,
+              onTap: _toggleSound,
             ),
           ),
 
-          const SizedBox(
-            width: 6,
-          ),
+          const SizedBox(width: 6),
 
           Expanded(
             child: _statusCard(
@@ -1967,8 +1738,7 @@ class _ScanScreenState extends State<ScanScreen>
               vibrationEnabled
                   ? Colors.greenAccent
                   : Colors.white54,
-              onTap:
-                  _toggleVibration,
+              onTap: _toggleVibration,
             ),
           ),
         ],
@@ -1986,12 +1756,9 @@ class _ScanScreenState extends State<ScanScreen>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.all(7),
-        decoration:
-            BoxDecoration(
-          color:
-              const Color(0xFF07121F),
+        padding: const EdgeInsets.all(7),
+        decoration: BoxDecoration(
+          color: const Color(0xFF07121F),
           borderRadius:
               BorderRadius.circular(15),
           border: Border.all(
@@ -2008,35 +1775,28 @@ class _ScanScreenState extends State<ScanScreen>
               size: 29,
             ),
 
-            const SizedBox(
-              height: 5,
-            ),
+            const SizedBox(height: 5),
 
             Text(
               title,
-              textAlign:
-                  TextAlign.center,
+              textAlign: TextAlign.center,
               maxLines: 1,
               overflow:
                   TextOverflow.ellipsis,
               style: const TextStyle(
-                color:
-                    Colors.white70,
+                color: Colors.white70,
                 fontSize: 10,
               ),
             ),
 
-            const SizedBox(
-              height: 4,
-            ),
+            const SizedBox(height: 4),
 
             Text(
               value,
               style: TextStyle(
                 color: color,
                 fontSize: 12,
-                fontWeight:
-                    FontWeight.bold,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
@@ -2046,29 +1806,147 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   // ============================================================
-  // FILTER
+  // FILTER DIALOG
   // ============================================================
 
   void _showFilterDialog() {
+    double dialogFilter = filterStrength;
+
     showDialog(
       context: context,
-      builder: (context) {
-        double filter = 50;
-
+      builder: (dialogContext) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
+          textDirection: TextDirection.rtl,
           child: StatefulBuilder(
-            builder:
-                (context, setDialogState) {
+            builder: (
+              context,
+              setDialogState,
+            ) {
               return AlertDialog(
                 backgroundColor:
-                    const Color(
-                  0xFF07121F,
+                    const Color(0xFF07121F),
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(22),
+                  side: BorderSide(
+                    color: Colors.cyanAccent
+                        .withOpacity(.20),
+                  ),
                 ),
                 title: const Text(
                   'قوة الفلترة',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
                 ),
                 content: Column(
                   mainAxisSize:
-                      MainAxisS
+                      MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'تحكم في تنعيم الإشارة وتقليل التشويش.',
+                      textAlign:
+                          TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white60,
+                        height: 1.5,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 20,
+                    ),
+
+                    Text(
+                      '${dialogFilter.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: Colors.cyanAccent,
+                        fontSize: 34,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+
+                    Slider(
+                      value: dialogFilter,
+                      min: 0,
+                      max: 100,
+                      divisions: 20,
+                      activeColor:
+                          Colors.cyanAccent,
+                      inactiveColor:
+                          Colors.white12,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          dialogFilter = value;
+                        });
+                      },
+                    ),
+
+                    Row(
+                      mainAxisAlignment:
+                          MainAxisAlignment
+                              .spaceBetween,
+                      children: const [
+                        Text(
+                          'سريعة',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          'متوازنة',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          'قوية',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(
+                        dialogContext,
+                      );
+                    },
+                    child: const Text(
+                      'إلغاء',
+                      style: TextStyle(
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ),
+
+                  ElevatedButton(
+                    style:
+                        ElevatedButton.styleFrom(
+                      backgroundColor:
+                          Colors.cyanAccent,
+                      foregroundColor:
+                          Colors.black,
+                      shape:
+                          RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(
+                          12,
+                        ),
+                      ),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        filterStrength =
+                            dialogFilter;
+     
