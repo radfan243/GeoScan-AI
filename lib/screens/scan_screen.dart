@@ -62,6 +62,18 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  @override
+  void dispose() {
+    _signalSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    _radarController.dispose();
+    super.dispose();
+  }
+
+  // ============================================================
   // REAL ESP32 SIGNAL
   // ============================================================
 
@@ -540,14 +552,12 @@ class _ScanScreenState extends State<ScanScreen>
                   soundEnabled ? 'يعمل' : 'متوقف',
                   _toggleSound,
                 ),
-
                 _dialogAction(
                   Icons.vibration,
                   'الاهتزاز',
                   vibrationEnabled ? 'يعمل' : 'متوقف',
                   _toggleVibration,
                 ),
-
                 _dialogAction(
                   Icons.delete_sweep,
                   'تصفير البيانات',
@@ -1182,42 +1192,24 @@ class _ScanScreenState extends State<ScanScreen>
             mainAxisAlignment:
                 MainAxisAlignment.spaceAround,
             children: const [
-              Text(
-                '0',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
-              Text(
-                '20',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
-              Text(
-                '40',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
-              Text(
-                '60',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
-              Text(
-                '80',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
-              Text(
-                '100',
-                style: TextStyle(
-                  color: Colors.white70,
-                ),
-              ),
+              Text('0',
+                  style:
+                      TextStyle(color: Colors.white70)),
+              Text('20',
+                  style:
+                      TextStyle(color: Colors.white70)),
+              Text('40',
+                  style:
+                      TextStyle(color: Colors.white70)),
+              Text('60',
+                  style:
+                      TextStyle(color: Colors.white70)),
+              Text('80',
+                  style:
+                      TextStyle(color: Colors.white70)),
+              Text('100',
+                  style:
+                      TextStyle(color: Colors.white70)),
             ],
           ),
 
@@ -1316,9 +1308,7 @@ class _ScanScreenState extends State<ScanScreen>
           flex: 6,
           child: _buildGraph(),
         ),
-
         const SizedBox(width: 10),
-
         Expanded(
           flex: 4,
           child: _buildTargetAnalysis(),
@@ -1820,7 +1810,7 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   // ============================================================
-  // FILTER DIALOG
+  // FILTER DIALOG - FIXED
   // ============================================================
 
   void _showFilterDialog() {
@@ -1929,6 +1919,7 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                   ],
                 ),
+
                 actions: [
                   TextButton(
                     onPressed: () {
@@ -1945,11 +1936,11 @@ class _ScanScreenState extends State<ScanScreen>
                   ),
 
                   ElevatedButton(
-                    style:
-                        ElevatedButton.styleFrom(
-                      backgroundColor:
-                          Colors.cyanAccent,
-                      foregroundColor:
-                          Colors.black,
-                      shape:
-         
+                    onPressed: () {
+                      setState(() {
+                        filterStrength =
+                            dialogFilter;
+                      });
+
+                      Navigator.pop(
+                     
