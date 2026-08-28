@@ -61,10 +61,6 @@ class _ScanScreenState extends State<ScanScreen>
     _listenToConnection();
   }
 
-  // ============================================================
-  // DISPOSE
-  // ============================================================
-
   @override
   void dispose() {
     _signalSubscription?.cancel();
@@ -98,11 +94,11 @@ class _ScanScreenState extends State<ScanScreen>
         if (newValue > peak) {
           peak = newValue;
         }
-
-        if (vibrationEnabled && newValue >= 80) {
-          HapticFeedback.selectionClick();
-        }
       });
+
+      if (vibrationEnabled && newValue >= 80) {
+        HapticFeedback.selectionClick();
+      }
     });
   }
 
@@ -418,7 +414,7 @@ class _ScanScreenState extends State<ScanScreen>
           top: Radius.circular(25),
         ),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: SafeArea(
@@ -451,7 +447,7 @@ class _ScanScreenState extends State<ScanScreen>
                       ),
                     ),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
 
                       Navigator.push(
                         context,
@@ -475,7 +471,7 @@ class _ScanScreenState extends State<ScanScreen>
                       ),
                     ),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _resetReading();
                     },
                   ),
@@ -492,7 +488,7 @@ class _ScanScreenState extends State<ScanScreen>
                       ),
                     ),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _saveReading();
                     },
                   ),
@@ -509,7 +505,7 @@ class _ScanScreenState extends State<ScanScreen>
                       ),
                     ),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _showAbout();
                     },
                   ),
@@ -529,7 +525,7 @@ class _ScanScreenState extends State<ScanScreen>
   void _openMore() {
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: AlertDialog(
@@ -552,12 +548,14 @@ class _ScanScreenState extends State<ScanScreen>
                   soundEnabled ? 'يعمل' : 'متوقف',
                   _toggleSound,
                 ),
+
                 _dialogAction(
                   Icons.vibration,
                   'الاهتزاز',
                   vibrationEnabled ? 'يعمل' : 'متوقف',
                   _toggleVibration,
                 ),
+
                 _dialogAction(
                   Icons.delete_sweep,
                   'تصفير البيانات',
@@ -569,7 +567,7 @@ class _ScanScreenState extends State<ScanScreen>
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context);
+                  Navigator.pop(dialogContext);
                 },
                 child: const Text(
                   'إغلاق',
@@ -622,7 +620,7 @@ class _ScanScreenState extends State<ScanScreen>
   void _showAbout() {
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: AlertDialog(
@@ -644,7 +642,7 @@ class _ScanScreenState extends State<ScanScreen>
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context);
+                  Navigator.pop(dialogContext);
                 },
                 child: const Text(
                   'حسنًا',
@@ -661,24 +659,224 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   // ============================================================
-  // MESSAGE
+  // ANALYSIS INFO
   // ============================================================
 
-  void _showMessage(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
+  void _showAnalysisInfo() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Directionality(
           textDirection: TextDirection.rtl,
-        ),
-        behavior: SnackBarBehavior.floating,
-      ),
+          child: AlertDialog(
+            backgroundColor:
+                const Color(0xFF07121F),
+            title: const Text(
+              'معلومة مهمة',
+              style: TextStyle(
+                color: Colors.white,
+              ),
+            ),
+            content: const Text(
+              'النسب الموجودة في تحليل الهدف حاليًا هي مؤشرات مبنية على قوة الإشارة فقط.\n\n'
+              'لا تعتبر إثباتًا أن الهدف ذهب أو نحاس أو فضة حتى نبني خوارزمية تمييز المواد من بيانات الحساس الحقيقية.',
+              style: TextStyle(
+                color: Colors.white70,
+                height: 1.6,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text(
+                  'حسنًا',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
+
+  // ============================================================
+  // FILTER DIALOG
+  // ============================================================
+
+  void _showFilterDialog() {
+    double dialogFilter = filterStrength;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: StatefulBuilder(
+            builder: (
+              dialogBuildContext,
+              setDialogState,
+            ) {
+              return AlertDialog(
+                backgroundColor:
+                    const Color(0xFF07121F),
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(22),
+                  side: BorderSide(
+                    color: Colors.cyanAccent
+                        .withOpacity(.20),
+                  ),
+                ),
+                title: const Text(
+                  'قوة الفلترة',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+                content: Column(
+                  mainAxisSize:
+                      MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'تحكم في تنعيم الإشارة وتقليل التشويش.',
+                      textAlign:
+                          TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white60,
+                        height: 1.5,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 20,
+                    ),
+
+                    Text(
+                      '${dialogFilter.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: Colors.cyanAccent,
+                        fontSize: 34,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+
+                    Slider(
+                      value: dialogFilter,
+                      min: 0,
+                      max: 100,
+                      divisions: 20,
+                      activeColor:
+                          Colors.cyanAccent,
+                      inactiveColor:
+                          Colors.white12,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          dialogFilter = value;
+                        });
+                      },
+                    ),
+
+                    const Row(
+                      mainAxisAlignment:
+                          MainAxisAlignment
+                              .spaceBetween,
+                      children: [
+                        Text(
+                          'سريعة',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          'متوازنة',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          'قوية',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(
+                        dialogContext,
+                      );
+                    },
+                    child: const Text(
+                      'إلغاء',
+                      style: TextStyle(
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ),
+
+                  ElevatedButton(
+                    style:
+                        ElevatedButton.styleFrom(
+                      backgroundColor:
+                          Colors.cyanAccent,
+                      foregroundColor:
+                          Colors.black,
+                      shape:
+                          RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        filterStrength =
+                            dialogFilter;
+                      });
+
+                      Navigator.pop(
+                        dialogContext,
+                      );
+
+                      _showMessage(
+                        'تم تحديث الفلترة إلى '
+                        '${dialogFilter.toStringAsFixed(0)}%',
+                      );
+                    },
+                    child: const Text(
+                      'حفظ',
+                      style: TextStyle(
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // MESSAGE
+  // ============================================================
 
   // ============================================================
   // BUILD
@@ -870,7 +1068,8 @@ class _ScanScreenState extends State<ScanScreen>
                   345,
                 ),
                 painter: _RadarBackgroundPainter(
-                  progress: _radarController.value,
+                  progress:
+                      _radarController.value,
                 ),
               );
             },
@@ -1192,24 +1391,42 @@ class _ScanScreenState extends State<ScanScreen>
             mainAxisAlignment:
                 MainAxisAlignment.spaceAround,
             children: const [
-              Text('0',
-                  style:
-                      TextStyle(color: Colors.white70)),
-              Text('20',
-                  style:
-                      TextStyle(color: Colors.white70)),
-              Text('40',
-                  style:
-                      TextStyle(color: Colors.white70)),
-              Text('60',
-                  style:
-                      TextStyle(color: Colors.white70)),
-              Text('80',
-                  style:
-                      TextStyle(color: Colors.white70)),
-              Text('100',
-                  style:
-                      TextStyle(color: Colors.white70)),
+              Text(
+                '0',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+              Text(
+                '20',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+              Text(
+                '40',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+              Text(
+                '60',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+              Text(
+                '80',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+              Text(
+                '100',
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
             ],
           ),
 
@@ -1235,7 +1452,8 @@ class _ScanScreenState extends State<ScanScreen>
                     color = Colors.greenAccent;
                   }
 
-                  final active = signal >= value;
+                  final active =
+                      signal >= value;
 
                   return Expanded(
                     child: AnimatedContainer(
@@ -1308,7 +1526,9 @@ class _ScanScreenState extends State<ScanScreen>
           flex: 6,
           child: _buildGraph(),
         ),
+
         const SizedBox(width: 10),
+
         Expanded(
           flex: 4,
           child: _buildTargetAnalysis(),
@@ -1418,7 +1638,8 @@ class _ScanScreenState extends State<ScanScreen>
         .clamp(0.0, 100.0)
         .toDouble();
 
-    final color = _targetColor(target);
+    final color =
+        _targetColor(target);
 
     return Container(
       margin: const EdgeInsets.only(
@@ -1486,7 +1707,8 @@ class _ScanScreenState extends State<ScanScreen>
                       backgroundColor:
                           Colors.white10,
                       valueColor:
-                          AlwaysStoppedAnimation<Color>(
+                          AlwaysStoppedAnimation<
+                              Color>(
                         color,
                       ),
                     ),
@@ -1508,52 +1730,6 @@ class _ScanScreenState extends State<ScanScreen>
           ],
         ),
       ),
-    );
-  }
-
-  // ============================================================
-  // ANALYSIS INFO
-  // ============================================================
-
-  void _showAnalysisInfo() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            backgroundColor:
-                const Color(0xFF07121F),
-            title: const Text(
-              'معلومة مهمة',
-              style: TextStyle(
-                color: Colors.white,
-              ),
-            ),
-            content: const Text(
-              'النسب الموجودة في تحليل الهدف حاليًا هي مؤشرات مبنية على قوة الإشارة فقط.\n\n'
-              'لا تعتبر إثباتًا أن الهدف ذهب أو نحاس أو فضة حتى نبني خوارزمية تمييز المواد من بيانات الحساس الحقيقية.',
-              style: TextStyle(
-                color: Colors.white70,
-                height: 1.6,
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                child: const Text(
-                  'حسنًا',
-                  style: TextStyle(
-                    color: Colors.cyanAccent,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1722,7 +1898,9 @@ class _ScanScreenState extends State<ScanScreen>
             child: _statusCard(
               Icons.volume_up,
               'التنبيه الصوتي',
-              soundEnabled ? 'يعمل' : 'متوقف',
+              soundEnabled
+                  ? 'يعمل'
+                  : 'متوقف',
               soundEnabled
                   ? Colors.greenAccent
                   : Colors.white54,
@@ -1763,184 +1941,4 @@ class _ScanScreenState extends State<ScanScreen>
         padding: const EdgeInsets.all(7),
         decoration: BoxDecoration(
           color: const Color(0xFF07121F),
-          borderRadius:
-              BorderRadius.circular(15),
-          border: Border.all(
-            color: Colors.white10,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              color: color,
-              size: 29,
-            ),
-
-            const SizedBox(height: 5),
-
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow:
-                  TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 10,
-              ),
-            ),
-
-            const SizedBox(height: 4),
-
-            Text(
-              value,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // FILTER DIALOG - FIXED
-  // ============================================================
-
-  void _showFilterDialog() {
-    double dialogFilter = filterStrength;
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: StatefulBuilder(
-            builder: (
-              context,
-              setDialogState,
-            ) {
-              return AlertDialog(
-                backgroundColor:
-                    const Color(0xFF07121F),
-                shape: RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(22),
-                  side: BorderSide(
-                    color: Colors.cyanAccent
-                        .withOpacity(.20),
-                  ),
-                ),
-                title: const Text(
-                  'قوة الفلترة',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
-                ),
-                content: Column(
-                  mainAxisSize:
-                      MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'تحكم في تنعيم الإشارة وتقليل التشويش.',
-                      textAlign:
-                          TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white60,
-                        height: 1.5,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 20,
-                    ),
-
-                    Text(
-                      '${dialogFilter.toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: Colors.cyanAccent,
-                        fontSize: 34,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-
-                    Slider(
-                      value: dialogFilter,
-                      min: 0,
-                      max: 100,
-                      divisions: 20,
-                      activeColor:
-                          Colors.cyanAccent,
-                      inactiveColor:
-                          Colors.white12,
-                      onChanged: (value) {
-                        setDialogState(() {
-                          dialogFilter = value;
-                        });
-                      },
-                    ),
-
-                    Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment
-                              .spaceBetween,
-                      children: const [
-                        Text(
-                          'سريعة',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          'متوازنة',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          'قوية',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(
-                        dialogContext,
-                      );
-                    },
-                    child: const Text(
-                      'إلغاء',
-                      style: TextStyle(
-                        color: Colors.white60,
-                      ),
-                    ),
-                  ),
-
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        filterStrength =
-                            dialogFilter;
-                      });
-
-                      Navigator.pop(
-                     
+        
