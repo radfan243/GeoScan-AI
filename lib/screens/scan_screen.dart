@@ -86,6 +86,10 @@ class _ScanScreenState extends State<ScanScreen>
         if (newValue > peak) {
           peak = newValue;
         }
+
+        if (vibrationEnabled && newValue >= 80) {
+          HapticFeedback.selectionClick();
+        }
       });
     });
   }
@@ -95,13 +99,11 @@ class _ScanScreenState extends State<ScanScreen>
         _bluetoothService.connectionStream.listen((connected) {
       if (!mounted) return;
 
-      if (!connected && scanning) {
-        setState(() {
+      setState(() {
+        if (!connected) {
           scanning = false;
-        });
-      }
-
-      setState(() {});
+        }
+      });
     });
   }
 
@@ -119,7 +121,7 @@ class _ScanScreenState extends State<ScanScreen>
 
     final variance = recent
             .map(
-              (v) => math.pow(v - average, 2),
+              (v) => math.pow(v - average, 2).toDouble(),
             )
             .reduce((a, b) => a + b) /
         recent.length;
@@ -432,8 +434,9 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     title: const Text(
                       'الاتصال بجهاز ESP32',
-                      style:
-                          TextStyle(color: Colors.white),
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -455,8 +458,9 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     title: const Text(
                       'تصفير القراءة',
-                      style:
-                          TextStyle(color: Colors.white),
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -471,8 +475,9 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     title: const Text(
                       'حفظ القراءة الحالية',
-                      style:
-                          TextStyle(color: Colors.white),
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -487,8 +492,9 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     title: const Text(
                       'حول GeoScan AI',
-                      style:
-                          TextStyle(color: Colors.white),
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
                     ),
                     onTap: () {
                       Navigator.pop(context);
@@ -521,7 +527,9 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             title: const Text(
               'خيارات المسح',
-              style: TextStyle(color: Colors.white),
+              style: TextStyle(
+                color: Colors.white,
+              ),
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -550,8 +558,9 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed: () =>
-                    Navigator.pop(context),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
                 child: const Text(
                   'إغلاق',
                   style: TextStyle(
@@ -624,8 +633,9 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed: () =>
-                    Navigator.pop(context),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
                 child: const Text(
                   'حسنًا',
                   style: TextStyle(
@@ -647,8 +657,7 @@ class _ScanScreenState extends State<ScanScreen>
   void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context)
-        .hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1512,6 +1521,10 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
+  // ============================================================
+  // ANALYSIS INFO
+  // ============================================================
+
   void _showAnalysisInfo() {
     showDialog(
       context: context,
@@ -1537,8 +1550,9 @@ class _ScanScreenState extends State<ScanScreen>
             ),
             actions: [
               TextButton(
-                onPressed: () =>
-                    Navigator.pop(context),
+                onPressed: () {
+                  Navigator.pop(context);
+                },
                 child: const Text(
                   'حسنًا',
                   style: TextStyle(
@@ -1938,15 +1952,4 @@ class _ScanScreenState extends State<ScanScreen>
                       foregroundColor:
                           Colors.black,
                       shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                          12,
-                        ),
-                      ),
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        filterStrength =
-                            dialogFilter;
-     
+         
