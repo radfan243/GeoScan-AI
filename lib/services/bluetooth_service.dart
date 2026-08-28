@@ -7,6 +7,22 @@ class BluetoothService {
   // ============================================================
   // GeoScan AI
   // Flutter <-> ESP32 BLE
+  //
+  // SHARED SINGLETON SERVICE
+  // جميع شاشات التطبيق تستخدم نفس الاتصال
+  // ============================================================
+
+  static final BluetoothService _instance =
+      BluetoothService._internal();
+
+  factory BluetoothService() {
+    return _instance;
+  }
+
+  BluetoothService._internal();
+
+  // ============================================================
+  // BLE UUIDs
   // ============================================================
 
   static final fbp.Guid serviceUuid = fbp.Guid(
@@ -21,14 +37,27 @@ class BluetoothService {
     '12345678-1234-1234-1234-1234567890ad',
   );
 
+  // ============================================================
+  // DEVICE
+  // ============================================================
+
   fbp.BluetoothDevice? device;
 
   fbp.BluetoothCharacteristic? notifyCharacteristic;
   fbp.BluetoothCharacteristic? writeCharacteristic;
 
+  // ============================================================
+  // SUBSCRIPTIONS
+  // ============================================================
+
   StreamSubscription<List<int>>? _notifySubscription;
+
   StreamSubscription<fbp.BluetoothConnectionState>?
       _connectionSubscription;
+
+  // ============================================================
+  // STREAM CONTROLLERS
+  // ============================================================
 
   final StreamController<double> _signalController =
       StreamController<double>.broadcast();
@@ -39,12 +68,22 @@ class BluetoothService {
   final StreamController<bool> _connectionController =
       StreamController<bool>.broadcast();
 
-  Stream<double> get signalStream => _signalController.stream;
+  // ============================================================
+  // PUBLIC STREAMS
+  // ============================================================
 
-  Stream<String> get dataStream => _dataController.stream;
+  Stream<double> get signalStream =>
+      _signalController.stream;
+
+  Stream<String> get dataStream =>
+      _dataController.stream;
 
   Stream<bool> get connectionStream =>
       _connectionController.stream;
+
+  // ============================================================
+  // CONNECTION STATE
+  // ============================================================
 
   bool get isConnected =>
       device != null && device!.isConnected;
@@ -54,18 +93,18 @@ class BluetoothService {
   // ============================================================
 
   Future<List<fbp.ScanResult>> scan({
-    Duration timeout = const Duration(seconds: 8),
+    Duration timeout =
+        const Duration(seconds: 8),
   }) async {
     final List<fbp.ScanResult> results = [];
+
+    StreamSubscription<List<fbp.ScanResult>>?
+        subscription;
 
     try {
       await fbp.FlutterBluePlus.stopScan();
 
-      await fbp.FlutterBluePlus.startScan(
-        timeout: timeout,
-      );
-
-      final subscription =
+      subscription =
           fbp.FlutterBluePlus.scanResults.listen(
         (scanResults) {
           for (final result in scanResults) {
@@ -82,13 +121,26 @@ class BluetoothService {
         },
       );
 
+      await fbp.FlutterBluePlus.startScan(
+        timeout: timeout,
+      );
+
       await Future.delayed(timeout);
 
-      await subscription.cancel();
-
       await fbp.FlutterBluePlus.stopScan();
+
+      await subscription.cancel();
+      subscription = null;
     } catch (e) {
-      print('GeoScan AI Scan Error: $e');
+      print(
+        'GeoScan AI Scan Error: $e',
+      );
+
+      try {
+        await fbp.FlutterBluePlus.stopScan();
+      } catch (_) {}
+
+      await subscription?.cancel();
     }
 
     return results;
@@ -102,34 +154,50 @@ class BluetoothService {
     fbp.BluetoothDevice target,
   ) async {
     try {
-      await disconnect();
+      // إذا كان هناك اتصال سابق، نفصله أولًا
+      if (device != null) {
+        await disconnect();
+      }
 
       device = target;
 
       await device!.connect(
         license: fbp.License.free,
-        timeout: const Duration(seconds: 15),
+        timeout:
+            const Duration(seconds: 15),
         autoConnect: false,
       );
 
       _connectionController.add(true);
+
+      // مراقبة حالة الاتصال
+      await _connectionSubscription?.cancel();
 
       _connectionSubscription =
           device!.connectionState.listen(
         (state) {
           final connected =
               state ==
-                  fbp.BluetoothConnectionState.connected;
+                  fbp.BluetoothConnectionState
+                      .connected;
 
-          _connectionController.add(connected);
+          _connectionController.add(
+            connected,
+          );
 
           if (!connected) {
             notifyCharacteristic = null;
             writeCharacteristic = null;
           }
         },
+        onError: (error) {
+          print(
+            'GeoScan AI Connection State Error: $error',
+          );
+        },
       );
 
+      // اكتشاف الخدمات
       final services =
           await device!.discoverServices();
 
@@ -143,18 +211,21 @@ class BluetoothService {
 
         for (final characteristic
             in service.characteristics) {
-          if (characteristic.uuid == notifyUuid) {
+          if (characteristic.uuid ==
+              notifyUuid) {
             notifyCharacteristic =
                 characteristic;
           }
 
-          if (characteristic.uuid == writeUuid) {
+          if (characteristic.uuid ==
+              writeUuid) {
             writeCharacteristic =
                 characteristic;
           }
         }
       }
 
+      // التأكد من وجود الخصائص المطلوبة
       if (notifyCharacteristic == null ||
           writeCharacteristic == null) {
         print(
@@ -166,15 +237,17 @@ class BluetoothService {
         return false;
       }
 
+      // تشغيل استقبال البيانات
       final notificationStarted =
           await startNotifications();
 
       if (!notificationStarted) {
         await disconnect();
+
         return false;
       }
 
-      // طلب الحالة الحالية من ESP32
+      // طلب حالة ESP32 الحالية
       await getStatus();
 
       return true;
@@ -203,10 +276,13 @@ class BluetoothService {
     try {
       await _notifySubscription?.cancel();
 
-      await notifyCharacteristic!.setNotifyValue(true);
+      await notifyCharacteristic!
+          .setNotifyValue(true);
 
       _notifySubscription =
-          notifyCharacteristic!.lastValueStream.listen(
+          notifyCharacteristic!
+              .lastValueStream
+              .listen(
         (value) {
           _handleIncomingData(value);
         },
@@ -231,7 +307,9 @@ class BluetoothService {
   // ESP32 DATA
   // ============================================================
 
-  void _handleIncomingData(List<int> value) {
+  void _handleIncomingData(
+    List<int> value,
+  ) {
     if (value.isEmpty) {
       return;
     }
@@ -252,27 +330,29 @@ class BluetoothService {
         'GeoScan AI <- ESP32: $text',
       );
 
-      // نرسل JSON كنص إلى ScanScreen
+      // إرسال البيانات الخام إلى جميع الشاشات
       _dataController.add(text);
 
-      final decoded = _tryParseJson(text);
+      // محاولة قراءة JSON
+      final decoded =
+          _tryParseJson(text);
 
       if (decoded != null) {
-        final value =
+        final incomingSignal =
             decoded['signal'] ??
-            decoded['value'] ??
-            decoded['strength'] ??
-            decoded['reading'];
+                decoded['value'] ??
+                decoded['strength'] ??
+                decoded['reading'];
 
-        if (value != null) {
-          final signal =
+        if (incomingSignal != null) {
+          final parsedSignal =
               double.tryParse(
-                    value.toString(),
+                    incomingSignal.toString(),
                   ) ??
                   0.0;
 
           final safeSignal =
-              signal
+              parsedSignal
                   .clamp(0.0, 100.0)
                   .toDouble();
 
@@ -321,8 +401,7 @@ class BluetoothService {
     }
 
     try {
-      final bytes =
-          utf8.encode(command);
+      final bytes = utf8.encode(command);
 
       final withoutResponse =
           writeCharacteristic!
@@ -331,7 +410,8 @@ class BluetoothService {
 
       await writeCharacteristic!.write(
         bytes,
-        withoutResponse: withoutResponse,
+        withoutResponse:
+            withoutResponse,
       );
 
       print(
@@ -350,35 +430,35 @@ class BluetoothService {
 
   // ============================================================
   // START SCAN
-  // ESP32 expects: START
+  // ESP32: START
   // ============================================================
 
   Future<bool> startScanning() async {
     return sendCommand('START');
   }
 
-  // اسم متوافق مع ScanScreen القديمة
+  // توافق مع الأكواد القديمة
   Future<bool> startScan() async {
     return startScanning();
   }
 
   // ============================================================
   // STOP SCAN
-  // ESP32 expects: STOP
+  // ESP32: STOP
   // ============================================================
 
   Future<bool> stopScanning() async {
     return sendCommand('STOP');
   }
 
-  // اسم متوافق مع ScanScreen القديمة
+  // توافق مع الأكواد القديمة
   Future<bool> stopScan() async {
     return stopScanning();
   }
 
   // ============================================================
   // CALIBRATION
-  // ESP32 expects: CALIBRATE
+  // ESP32: CALIBRATE
   // ============================================================
 
   Future<bool> calibrate() async {
@@ -387,6 +467,7 @@ class BluetoothService {
 
   // ============================================================
   // STATUS
+  // ESP32: GET_STATUS
   // ============================================================
 
   Future<bool> getStatus() async {
@@ -395,6 +476,7 @@ class BluetoothService {
 
   // ============================================================
   // SENSITIVITY
+  // ESP32: SENSITIVITY:x
   // ============================================================
 
   Future<bool> setSensitivity(
@@ -412,8 +494,7 @@ class BluetoothService {
 
   // ============================================================
   // FILTER
-  //
-  // Flutter Arabic -> ESP32 protocol
+  // Flutter Arabic -> ESP32
   // ============================================================
 
   Future<bool> setFilter(
@@ -471,10 +552,7 @@ class BluetoothService {
 
   // ============================================================
   // TARGET
-  // ============================================================
-  //
-  // ESP32 الحالي لا يملك أمر TARGET.
-  // نحتفظ بالدالة حتى لا ينكسر أي كود قديم.
+  // ESP32 الحالي لا يملك TARGET
   // ============================================================
 
   Future<bool> setTarget(
@@ -517,9 +595,11 @@ class BluetoothService {
   Future<void> disconnect() async {
     try {
       await _notifySubscription?.cancel();
+
       _notifySubscription = null;
 
       await _connectionSubscription?.cancel();
+
       _connectionSubscription = null;
 
       if (notifyCharacteristic != null) {
@@ -548,14 +628,14 @@ class BluetoothService {
   }
 
   // ============================================================
-  // DISPOSE
+  // IMPORTANT
+  //
+  // لا نغلق StreamControllers هنا.
+  //
+  // BluetoothService مشترك طوال عمر التطبيق.
   // ============================================================
 
   Future<void> dispose() async {
     await disconnect();
-
-    await _signalController.close();
-    await _dataController.close();
-    await _connectionController.close();
   }
 }
