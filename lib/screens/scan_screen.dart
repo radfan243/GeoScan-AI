@@ -20,11 +20,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
   final List<double> signalHistory = [];
 
-  double signal = 0;
-  double rawSignal = 0;
-  double stability = 0;
-  double depth = 0;
-  double sensitivity = 75;
+  double signal = 0.0;
+  double rawSignal = 0.0;
+  double stability = 0.0;
+  double depth = 0.0;
+  double sensitivity = 75.0;
 
   bool scanning = false;
   bool connected = false;
@@ -41,7 +41,6 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
-
     _listenToBluetooth();
   }
 
@@ -75,45 +74,39 @@ class _ScanScreenState extends State<ScanScreen> {
   ) {
     if (!mounted) return;
 
-    final incomingSignal =
-        data.containsKey('signal')
-            ? _toDouble(data['signal'])
-            : signal;
+    final incomingSignal = data.containsKey('signal')
+        ? _toDouble(data['signal'])
+        : signal;
 
-    final incomingStability =
-        data.containsKey('stability')
-            ? _toDouble(data['stability'])
-            : stability;
+    final incomingStability = data.containsKey('stability')
+        ? _toDouble(data['stability'])
+        : stability;
 
-    final incomingDepth =
-        data.containsKey('depth')
-            ? _toDouble(data['depth'])
-            : depth;
+    final incomingDepth = data.containsKey('depth')
+        ? _toDouble(data['depth'])
+        : depth;
 
-    final incomingStatus =
-        data.containsKey('status')
-            ? data['status'].toString()
-            : deviceStatus;
+    final incomingStatus = data.containsKey('status')
+        ? data['status'].toString()
+        : deviceStatus;
 
-    final incomingTarget =
-        data.containsKey('target')
-            ? data['target'].toString()
-            : targetType;
+    final incomingTarget = data.containsKey('target')
+        ? data['target'].toString()
+        : targetType;
 
     // ----------------------------------------------------------
     // حماية القيم
     // ----------------------------------------------------------
 
     final safeRawSignal =
-        incomingSignal.clamp(0, 100).toDouble();
+        incomingSignal.clamp(0.0, 100.0).toDouble();
 
     final safeStability =
-        incomingStability.clamp(0, 100).toDouble();
+        incomingStability.clamp(0.0, 100.0).toDouble();
 
-    final safeDepth =
-        incomingDepth < 0
-            ? 0
-            : incomingDepth;
+    final safeDepth = incomingDepth < 0.0
+        ? 0.0
+        : incomingDepth.toDouble();
 
     // ----------------------------------------------------------
     // تنعيم الإشارة
@@ -121,14 +114,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
     rawSignal = safeRawSignal;
 
-    final smoothedSignal =
-        signal == 0
-            ? safeRawSignal
-            : (signal * 0.72) +
-                (safeRawSignal * 0.28);
+    final smoothedSignal = signal == 0.0
+        ? safeRawSignal
+        : (signal * 0.72) +
+            (safeRawSignal * 0.28);
 
     final safeSignal =
-        smoothedSignal.clamp(0, 100).toDouble();
+        smoothedSignal.clamp(0.0, 100.0).toDouble();
 
     final now = DateTime.now();
 
@@ -141,6 +133,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final isScanning =
         incomingStatus == 'يمسح' ||
+        incomingStatus == 'جارٍ المسح' ||
         incomingStatus == 'SCANNING' ||
         statusLower == 'scanning' ||
         statusLower == 'scan';
@@ -181,10 +174,10 @@ class _ScanScreenState extends State<ScanScreen> {
         calibrating = false;
         deviceStatus = 'غير متصل';
 
-        signal = 0;
-        rawSignal = 0;
-        stability = 0;
-        depth = 0;
+        signal = 0.0;
+        rawSignal = 0.0;
+        stability = 0.0;
+        depth = 0.0;
 
         signalHistory.clear();
       } else {
@@ -205,7 +198,7 @@ class _ScanScreenState extends State<ScanScreen> {
     return double.tryParse(
           value.toString().replaceAll(',', '.'),
         ) ??
-        0;
+        0.0;
   }
 
   // ============================================================
@@ -228,15 +221,22 @@ class _ScanScreenState extends State<ScanScreen> {
     }
 
     try {
-      await _bluetooth.startScan();
+      final success =
+          await _bluetooth.startScan();
 
       if (!mounted) return;
 
-      setState(() {
-        scanning = true;
-        deviceStatus = 'يمسح';
-        signalHistory.clear();
-      });
+      if (success) {
+        setState(() {
+          scanning = true;
+          deviceStatus = 'يمسح';
+          signalHistory.clear();
+        });
+      } else {
+        _showMessage(
+          'تعذر بدء المسح من ESP32',
+        );
+      }
     } catch (e) {
       _showMessage(
         'تعذر بدء المسح',
@@ -252,14 +252,21 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!connected) return;
 
     try {
-      await _bluetooth.stopScan();
+      final success =
+          await _bluetooth.stopScan();
 
       if (!mounted) return;
 
-      setState(() {
-        scanning = false;
-        deviceStatus = 'متوقف';
-      });
+      if (success) {
+        setState(() {
+          scanning = false;
+          deviceStatus = 'متوقف';
+        });
+      } else {
+        _showMessage(
+          'تعذر إيقاف المسح',
+        );
+      }
     } catch (e) {
       _showMessage(
         'تعذر إيقاف المسح',
@@ -291,29 +298,44 @@ class _ScanScreenState extends State<ScanScreen> {
         calibrating = true;
         deviceStatus = 'معايرة';
         signalHistory.clear();
-        signal = 0;
-        rawSignal = 0;
-        depth = 0;
+        signal = 0.0;
+        rawSignal = 0.0;
+        depth = 0.0;
       });
 
-      await _bluetooth.calibrate();
+      final success =
+          await _bluetooth.calibrate();
 
       if (!mounted) return;
 
-      setState(() {
-        calibrating = false;
-        stability = 100;
-        deviceStatus = 'جاهز';
-      });
+      if (success) {
+        setState(() {
+          calibrating = false;
+          stability = 100.0;
+          deviceStatus = 'جاهز';
+        });
 
-      _showMessage(
-        'تم إرسال أمر المعايرة إلى ESP32',
-      );
+        _showMessage(
+          'تم إرسال أمر المعايرة إلى ESP32',
+        );
+      } else {
+        setState(() {
+          calibrating = false;
+          deviceStatus = 'متصل';
+        });
+
+        _showMessage(
+          'تعذر تنفيذ المعايرة',
+        );
+      }
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         calibrating = false;
+        deviceStatus = connected
+            ? 'متصل'
+            : 'غير متصل';
       });
 
       _showMessage(
@@ -332,18 +354,25 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!connected) return;
 
     final safeValue =
-        value.clamp(0, 100).toDouble();
+        value.clamp(0.0, 100.0).toDouble();
 
     try {
-      await _bluetooth.setSensitivity(
+      final success =
+          await _bluetooth.setSensitivity(
         safeValue,
       );
 
       if (!mounted) return;
 
-      setState(() {
-        sensitivity = safeValue;
-      });
+      if (success) {
+        setState(() {
+          sensitivity = safeValue;
+        });
+      } else {
+        _showMessage(
+          'تعذر تغيير الحساسية',
+        );
+      }
     } catch (_) {
       _showMessage(
         'تعذر تغيير الحساسية',
@@ -361,15 +390,22 @@ class _ScanScreenState extends State<ScanScreen> {
     if (!connected) return;
 
     try {
-      await _bluetooth.setFilter(
+      final success =
+          await _bluetooth.setFilter(
         value,
       );
 
       if (!mounted) return;
 
-      setState(() {
-        filter = value;
-      });
+      if (success) {
+        setState(() {
+          filter = value;
+        });
+      } else {
+        _showMessage(
+          'تعذر تغيير الفلترة',
+        );
+      }
     } catch (_) {
       _showMessage(
         'تعذر تغيير الفلترة',
@@ -387,15 +423,22 @@ class _ScanScreenState extends State<ScanScreen> {
     final newValue = !audioEnabled;
 
     try {
-      await _bluetooth.setAudio(
+      final success =
+          await _bluetooth.setAudio(
         newValue,
       );
 
       if (!mounted) return;
 
-      setState(() {
-        audioEnabled = newValue;
-      });
+      if (success) {
+        setState(() {
+          audioEnabled = newValue;
+        });
+      } else {
+        _showMessage(
+          'تعذر تغيير الصوت',
+        );
+      }
     } catch (_) {
       _showMessage(
         'تعذر تغيير الصوت',
@@ -413,15 +456,22 @@ class _ScanScreenState extends State<ScanScreen> {
     final newValue = !vibrationEnabled;
 
     try {
-      await _bluetooth.setVibration(
+      final success =
+          await _bluetooth.setVibration(
         newValue,
       );
 
       if (!mounted) return;
 
-      setState(() {
-        vibrationEnabled = newValue;
-      });
+      if (success) {
+        setState(() {
+          vibrationEnabled = newValue;
+        });
+      } else {
+        _showMessage(
+          'تعذر تغيير الاهتزاز',
+        );
+      }
     } catch (_) {
       _showMessage(
         'تعذر تغيير الاهتزاز',
@@ -434,15 +484,15 @@ class _ScanScreenState extends State<ScanScreen> {
   // ============================================================
 
   Color get signalColor {
-    if (signal < 20) {
+    if (signal < 20.0) {
       return Colors.redAccent;
     }
 
-    if (signal < 40) {
+    if (signal < 40.0) {
       return Colors.orangeAccent;
     }
 
-    if (signal < 65) {
+    if (signal < 65.0) {
       return Colors.amberAccent;
     }
 
@@ -466,19 +516,19 @@ class _ScanScreenState extends State<ScanScreen> {
       return 'جاهز للمسح';
     }
 
-    if (signal < 20) {
+    if (signal < 20.0) {
       return 'إشارة ضعيفة';
     }
 
-    if (signal < 40) {
+    if (signal < 40.0) {
       return 'إشارة متوسطة';
     }
 
-    if (signal < 65) {
+    if (signal < 65.0) {
       return 'إشارة جيدة';
     }
 
-    if (signal < 85) {
+    if (signal < 85.0) {
       return 'إشارة قوية';
     }
 
@@ -498,15 +548,15 @@ class _ScanScreenState extends State<ScanScreen> {
       return 'في انتظار المسح';
     }
 
-    if (signal < 20) {
+    if (signal < 20.0) {
       return 'لا توجد إشارة واضحة';
     }
 
-    if (signal < 40) {
+    if (signal < 40.0) {
       return 'تغير ضعيف';
     }
 
-    if (signal < 65) {
+    if (signal < 65.0) {
       return 'تغير يحتاج إلى فحص';
     }
 
@@ -521,6 +571,8 @@ class _ScanScreenState extends State<ScanScreen> {
     String message,
   ) {
     if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -571,7 +623,8 @@ class _ScanScreenState extends State<ScanScreen> {
             Text(
               'نظام المسح الذكي',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.65),
+                color:
+                    Colors.white.withOpacity(0.65),
                 fontSize: 13,
               ),
             ),
@@ -723,7 +776,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      signal >= 65
+                      signal >= 65.0
                           ? Icons.warning_amber
                           : Icons.radar,
                       color: color,
@@ -790,7 +843,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       children: [
                         _smallInfoCard(
                           title: 'العمق',
-                          value: depth > 0
+                          value: depth > 0.0
                               ? '${depth.toStringAsFixed(2)} m'
                               : '--',
                           icon:
@@ -1555,12 +1608,6 @@ class _ScanScreenState extends State<ScanScreen> {
 
           const SizedBox(height: 12),
 
-          // ======================================================
-          // الإصلاح فقط:
-          // Expanded يستخدم عندما يكون للبطاقة ارتفاع محدد.
-          // أما البطاقات بدون height فتستخدم child مباشرة.
-          // ======================================================
-
           if (height != null)
             Expanded(
               child: child,
@@ -1633,7 +1680,7 @@ class GaugePainter extends CustomPainter {
 
       final active =
           value >=
-              progress * 100;
+              progress * 100.0;
 
       final paint = Paint()
         ..color = active
@@ -1670,8 +1717,8 @@ class GaugePainter extends CustomPainter {
     }
 
     final normalized =
-        value.clamp(0, 100) /
-            100;
+        value.clamp(0.0, 100.0) /
+            100.0;
 
     final pointerAngle =
         startAngle +
@@ -1689,11 +1736,11 @@ class GaugePainter extends CustomPainter {
     );
 
     final pointerColor =
-        value < 20
+        value < 20.0
             ? Colors.redAccent
-            : value < 40
+            : value < 40.0
                 ? Colors.orangeAccent
-                : value < 65
+                : value < 65.0
                     ? Colors.amberAccent
                     : Colors.greenAccent;
 
@@ -1774,8 +1821,8 @@ class SignalPainter extends CustomPainter {
 
       final normalized =
           values[i]
-                  .clamp(0, 100) /
-              100;
+                  .clamp(0.0, 100.0) /
+              100.0;
 
       final y =
           size.height -
