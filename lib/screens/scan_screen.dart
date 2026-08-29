@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/bluetooth_service.dart';
 
@@ -19,557 +18,554 @@ class _ScanScreenState extends State<ScanScreen>
     with SingleTickerProviderStateMixin {
   final BluetoothService _bluetooth = BluetoothService();
 
-  StreamSubscription<double>? _signalSubscription;
   StreamSubscription<String>? _dataSubscription;
   StreamSubscription<bool>? _connectionSubscription;
 
-  late AnimationController _animationController;
+  late final AnimationController _pulseController;
+
+  final List<double> signalHistory = <double>[];
+  final List<Map<String, dynamic>> savedReadings =
+      <Map<String, dynamic>>[];
 
   double signal = 0;
-  double smoothedSignal = 0;
+  double rawSignal = 0;
+  double baseline = 0;
+  double stability = 0;
+  double depth = 0;
   double sensitivity = 75;
 
   bool scanning = false;
   bool connected = false;
+  bool calibrating = false;
   bool audioEnabled = true;
   bool vibrationEnabled = true;
 
   String filter = 'متوسطة';
-  String selectedTarget = 'تلقائي';
-  String deviceName = 'غير متصل';
+  String deviceStatus = 'غير متصل';
+  String targetType = 'غير محدد';
 
-  String lastRawData = '';
-  String targetType = 'لا توجد قراءة';
-  String targetAnalysis = 'ابدأ المسح للحصول على تحليل';
+  DateTime? lastDataTime;
+  int? lastSequence;
 
-  int receivedPackets = 0;
-  DateTime? lastPacketTime;
-
-  final List<double> signalHistory = <double>[];
+  final List<String> targets = <String>[
+    'ذهب',
+    'معدن',
+    'فضة',
+    'نحاس',
+    'ألماس',
+    'ماء',
+  ];
 
   @override
   void initState() {
     super.initState();
 
-    _animationController = AnimationController(
+    _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat();
-
-    _listenBluetooth();
-    _loadSettings();
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
 
     connected = _bluetooth.isConnected;
-    deviceName = _bluetooth.deviceName;
-  }
-
-  void _listenBluetooth() {
-    _signalSubscription = _bluetooth.signalStream.listen(
-      (value) {
-        if (!mounted) return;
-
-        final safe = value.clamp(0.0, 100.0).toDouble();
-
-        setState(() {
-          signal = safe;
-
-          if (smoothedSignal == 0) {
-            smoothedSignal = safe;
-          } else {
-            smoothedSignal =
-                (smoothedSignal * 0.72) + (safe * 0.28);
-          }
-
-          signalHistory.add(smoothedSignal);
-
-          if (signalHistory.length > 80) {
-            signalHistory.removeAt(0);
-          }
-
-          receivedPackets++;
-          lastPacketTime = DateTime.now();
-
-          _updateAnalysis();
-        });
-      },
-    );
+    deviceStatus = connected ? 'متصل' : 'غير متصل';
 
     _dataSubscription = _bluetooth.dataStream.listen(
-      (raw) {
-        if (!mounted) return;
-
-        setState(() {
-          lastRawData = raw;
-          receivedPackets++;
-          lastPacketTime = DateTime.now();
-          _parseIncomingData(raw);
-        });
-      },
+      _handleIncomingData,
+      onError: (_) {},
     );
 
     _connectionSubscription =
         _bluetooth.connectionStream.listen(
-      (value) {
-        if (!mounted) return;
-
-        setState(() {
-          connected = value;
-          deviceName =
-              value ? _bluetooth.deviceName : 'غير متصل';
-
-          if (!value) {
-            scanning = false;
-          }
-        });
-      },
+      _handleConnectionState,
+      onError: (_) {},
     );
   }
 
-  void _parseIncomingData(String raw) {
-    final text = raw.trim();
-
-    if (text.isEmpty) return;
-
-    try {
-      final decoded = jsonDecode(text);
-
-      if (decoded is Map) {
-        final dynamic incoming =
-            decoded['target'] ??
-                decoded['type'] ??
-                decoded['material'];
-
-        if (incoming != null) {
-          targetType = incoming.toString();
-        }
-
-        final dynamic status = decoded['status'];
-
-        if (status != null &&
-            status.toString().isNotEmpty) {
-          targetAnalysis = status.toString();
-        }
-
-        return;
-      }
-    } catch (_) {}
-
-    final lower = text.toLowerCase();
-
-    if (lower.contains('gold') ||
-        text.contains('ذهب')) {
-      targetType = 'ذهب محتمل';
-    } else if (lower.contains('silver') ||
-        text.contains('فضة')) {
-      targetType = 'فضة محتملة';
-    } else if (lower.contains('copper') ||
-        text.contains('نحاس')) {
-      targetType = 'نحاس محتمل';
-    } else if (lower.contains('water') ||
-        text.contains('ماء')) {
-      targetType = 'ماء محتمل';
-    }
-  }
-
-  void _updateAnalysis() {
-    if (smoothedSignal < 20) {
-      targetType = 'إشارة ضعيفة';
-      targetAnalysis = 'لا توجد إشارة هدف واضحة';
-    } else if (smoothedSignal < 40) {
-      targetType = 'إشارة منخفضة';
-      targetAnalysis = 'قد تكون ضوضاء أو هدف بعيد';
-    } else if (smoothedSignal < 60) {
-      targetType = 'هدف محتمل';
-      targetAnalysis = 'توجد إشارة قابلة للتحليل';
-    } else if (smoothedSignal < 80) {
-      targetType = 'هدف معدني محتمل';
-      targetAnalysis = 'إشارة قوية نسبيًا';
-    } else {
-      targetType = 'هدف قوي محتمل';
-      targetAnalysis = 'إشارة قوية جدًا - افحص المنطقة';
-    }
-  }
-
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-
+  void _handleConnectionState(bool value) {
     if (!mounted) return;
 
     setState(() {
-      sensitivity =
-          prefs.getDouble('geoscan_sensitivity') ?? 75;
-      filter =
-          prefs.getString('geoscan_filter') ?? 'متوسطة';
-      audioEnabled =
-          prefs.getBool('geoscan_audio') ?? true;
-      vibrationEnabled =
-          prefs.getBool('geoscan_vibration') ?? true;
+      connected = value;
+
+      if (!value) {
+        scanning = false;
+        calibrating = false;
+        deviceStatus = 'غير متصل';
+        signal = 0;
+        rawSignal = 0;
+        baseline = 0;
+        stability = 0;
+        depth = 0;
+        signalHistory.clear();
+      } else {
+        deviceStatus = 'متصل';
+      }
     });
   }
 
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
+  void _handleIncomingData(String text) {
+    if (!mounted) return;
 
-    await prefs.setDouble(
-      'geoscan_sensitivity',
-      sensitivity,
+    final String cleaned = text.trim();
+    if (cleaned.isEmpty) return;
+
+    Map<String, dynamic> data = <String, dynamic>{};
+
+    try {
+      final dynamic decoded = jsonDecode(cleaned);
+
+      if (decoded is Map) {
+        data = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      final double? direct =
+          double.tryParse(cleaned.replaceAll(',', '.'));
+
+      if (direct != null) {
+        data['signal'] = direct;
+      }
+    }
+
+    if (data.isEmpty) return;
+
+    final double incomingSignal = _readDouble(
+      data,
+      <String>[
+        'signal',
+        'value',
+        'strength',
+        'reading',
+      ],
+      signal,
     );
 
-    await prefs.setString(
-      'geoscan_filter',
-      filter,
+    final double incomingRaw = _readDouble(
+      data,
+      <String>[
+        'raw',
+        'rawSignal',
+      ],
+      rawSignal,
     );
 
-    await prefs.setBool(
-      'geoscan_audio',
-      audioEnabled,
+    final double incomingBaseline = _readDouble(
+      data,
+      <String>[
+        'baseline',
+        'base',
+      ],
+      baseline,
     );
 
-    await prefs.setBool(
-      'geoscan_vibration',
-      vibrationEnabled,
+    final double incomingStability = _readDouble(
+      data,
+      <String>[
+        'stability',
+        'stable',
+      ],
+      stability,
     );
+
+    final double incomingDepth = _readDouble(
+      data,
+      <String>[
+        'depth',
+        'distance',
+      ],
+      depth,
+    );
+
+    final double safeSignal =
+        incomingSignal.clamp(0.0, 100.0).toDouble();
+
+    final double safeStability =
+        incomingStability.clamp(0.0, 100.0).toDouble();
+
+    final double safeDepth =
+        incomingDepth.isFinite && incomingDepth >= 0
+            ? incomingDepth
+            : 0;
+
+    final String status =
+        data['status']?.toString().trim() ?? '';
+
+    final String target =
+        data['target']?.toString().trim() ?? '';
+
+    final dynamic scanningValue = data['scanning'];
+
+    final bool incomingScanning =
+        scanningValue == true ||
+        status.toLowerCase() == 'scanning' ||
+        status.toLowerCase() == 'scan' ||
+        status == 'يمسح' ||
+        status == 'مسح';
+
+    final int? sequence = _readInt(
+      data,
+      <String>[
+        'sequence',
+        'seq',
+      ],
+    );
+
+    final double displayedSignal =
+        signal == 0
+            ? safeSignal
+            : signal * 0.70 + safeSignal * 0.30;
+
+    final double finalSignal =
+        displayedSignal.clamp(0.0, 100.0).toDouble();
+
+    setState(() {
+      signal = finalSignal;
+      rawSignal = incomingRaw;
+      baseline = incomingBaseline;
+      stability = safeStability;
+      depth = safeDepth;
+
+      if (status.isNotEmpty) {
+        deviceStatus = status;
+      } else {
+        deviceStatus =
+            incomingScanning ? 'يمسح' : 'متصل';
+      }
+
+      if (target.isNotEmpty) {
+        targetType = target;
+      }
+
+      scanning = incomingScanning;
+      lastSequence = sequence;
+      lastDataTime = DateTime.now();
+
+      if (signalHistory.length >= 80) {
+        signalHistory.removeAt(0);
+      }
+
+      signalHistory.add(finalSignal);
+    });
+  }
+
+  double _readDouble(
+    Map<String, dynamic> data,
+    List<String> keys,
+    double fallback,
+  ) {
+    for (final String key in keys) {
+      if (!data.containsKey(key)) continue;
+
+      final dynamic value = data[key];
+
+      if (value is num) {
+        return value.toDouble();
+      }
+
+      final double? parsed = double.tryParse(
+        value.toString().replaceAll(',', '.').trim(),
+      );
+
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+
+    return fallback;
+  }
+
+  int? _readInt(
+    Map<String, dynamic> data,
+    List<String> keys,
+  ) {
+    for (final String key in keys) {
+      if (!data.containsKey(key)) continue;
+
+      final dynamic value = data[key];
+
+      if (value is int) return value;
+
+      if (value is num) {
+        return value.round();
+      }
+
+      return int.tryParse(
+        value.toString().trim(),
+      );
+    }
+
+    return null;
+  }
+
+  bool get hasRecentData {
+    if (lastDataTime == null) return false;
+
+    return DateTime.now()
+            .difference(lastDataTime!)
+            .inSeconds <
+        3;
   }
 
   Color get signalColor {
-    if (smoothedSignal < 25) {
-      return Colors.redAccent;
-    }
-
-    if (smoothedSignal < 50) {
-      return Colors.orangeAccent;
-    }
-
-    if (smoothedSignal < 75) {
-      return Colors.amberAccent;
-    }
-
+    if (signal < 20) return Colors.redAccent;
+    if (signal < 40) return Colors.orangeAccent;
+    if (signal < 65) return Colors.amberAccent;
     return Colors.greenAccent;
   }
 
   String get signalStatus {
     if (!connected) return 'غير متصل';
+    if (calibrating) return 'جاري المعايرة';
+
+    if (scanning && !hasRecentData) {
+      return 'بانتظار البيانات';
+    }
+
     if (!scanning) return 'جاهز للمسح';
 
-    if (smoothedSignal < 25) {
-      return 'إشارة ضعيفة';
-    }
+    if (signal < 20) return 'إشارة ضعيفة';
+    if (signal < 40) return 'إشارة متوسطة';
+    if (signal < 65) return 'إشارة جيدة';
+    if (signal < 85) return 'إشارة قوية';
 
-    if (smoothedSignal < 50) {
-      return 'إشارة منخفضة';
-    }
-
-    if (smoothedSignal < 75) {
-      return 'إشارة جيدة';
-    }
-
-    return 'إشارة قوية';
+    return 'إشارة قوية جدًا';
   }
 
-  double get approximateDepth {
-    if (smoothedSignal < 10) return 0;
-    if (smoothedSignal < 25) return 0.3;
-    if (smoothedSignal < 45) return 0.6;
-    if (smoothedSignal < 65) return 1.0;
-    if (smoothedSignal < 85) return 1.5;
-    return 2.0;
-  }
+  String get targetAnalysis {
+    if (!connected) return 'الجهاز غير متصل';
 
-  String get stabilityText {
-    if (signalHistory.length < 5) {
-      return '--';
+    if (scanning && !hasRecentData) {
+      return 'بانتظار قراءة ESP32';
     }
 
-    final recent = signalHistory.length > 15
-        ? signalHistory.sublist(
-            signalHistory.length - 15,
-          )
-        : signalHistory;
-
-    final avg =
-        recent.reduce((a, b) => a + b) /
-            recent.length;
-
-    double variance = 0;
-
-    for (final value in recent) {
-      variance += math.pow(value - avg, 2);
+    if (signal < 20) return 'لا توجد إشارة واضحة';
+    if (signal < 40) return 'تغير ضعيف يحتاج فحصًا';
+    if (signal < 65) {
+      return 'تغير متوسط يحتاج تحققًا ميدانيًا';
+    }
+    if (signal < 85) {
+      return 'إشارة قوية - افحص الموقع';
     }
 
-    variance /= recent.length;
-
-    final deviation = math.sqrt(variance);
-
-    if (deviation < 3) return 'ممتاز';
-    if (deviation < 7) return 'جيد';
-    if (deviation < 12) return 'متوسط';
-
-    return 'ضعيف';
+    return 'إشارة قوية جدًا - تحقق ميدانيًا';
   }
 
-  Future<void> _startScanning() async {
+  String get depthText {
+    if (depth <= 0) return '--';
+    return '${depth.toStringAsFixed(2)} m';
+  }
+
+  Future<void> startScan() async {
     if (!connected) {
-      _showMessage('يجب الاتصال بجهاز ESP32 أولاً');
+      _showMessage('يجب الاتصال بجهاز ESP32 أولًا');
       return;
     }
 
-    final result = await _bluetooth.startScanning();
+    if (calibrating) {
+      _showMessage('انتظر حتى تنتهي المعايرة');
+      return;
+    }
+
+    final bool result =
+        await _bluetooth.startScan();
 
     if (!mounted) return;
 
     if (result) {
       setState(() {
         scanning = true;
-        receivedPackets = 0;
-        lastRawData = '';
+        deviceStatus = 'يمسح';
+        signalHistory.clear();
+        lastDataTime = null;
       });
 
-      if (vibrationEnabled) {
-        HapticFeedback.mediumImpact();
-      }
-
-      _showMessage('تم بدء المسح الحقيقي');
+      _showMessage('بدأ المسح الحقيقي من ESP32');
     } else {
-      _showMessage('تعذر إرسال أمر START إلى ESP32');
+      _showMessage('تعذر إرسال أمر بدء المسح');
     }
   }
 
-  Future<void> _stopScanning() async {
-    if (!connected) return;
-
-    final result = await _bluetooth.stopScanning();
-
-    if (!mounted) return;
-
-    setState(() {
-      scanning = false;
-    });
-
-    if (result) {
-      _showMessage('تم إيقاف المسح');
-    } else {
-      _showMessage('تعذر إرسال أمر STOP');
-    }
-  }
-
-  Future<void> _calibrate() async {
+  Future<void> stopScan() async {
     if (!connected) {
       _showMessage('الجهاز غير متصل');
       return;
     }
 
-    final result = await _bluetooth.calibrate();
+    final bool result =
+        await _bluetooth.stopScan();
 
     if (!mounted) return;
 
     if (result) {
       setState(() {
-        signal = 0;
-        smoothedSignal = 0;
-        signalHistory.clear();
+        scanning = false;
+        deviceStatus = 'متوقف';
       });
 
-      _showMessage('تم إرسال أمر المعايرة إلى ESP32');
-
-      if (vibrationEnabled) {
-        HapticFeedback.mediumImpact();
-      }
+      _showMessage('تم إيقاف المسح');
     } else {
-      _showMessage('فشل إرسال المعايرة');
+      _showMessage('تعذر إرسال أمر الإيقاف');
     }
   }
 
-  Future<void> _changeSensitivity(double value) async {
-    setState(() {
-      sensitivity = value;
-    });
-
-    await _bluetooth.setSensitivity(value);
-    await _saveSettings();
-  }
-
-  Future<void> _changeFilter(String value) async {
-    setState(() {
-      filter = value;
-    });
-
-    await _bluetooth.setFilter(value);
-    await _saveSettings();
-  }
-
-  Future<void> _toggleAudio(bool value) async {
-    setState(() {
-      audioEnabled = value;
-    });
-
-    await _bluetooth.setAudio(value);
-    await _saveSettings();
-
-    if (value) {
-      SystemSound.play(SystemSoundType.click);
-    }
-  }
-
-  Future<void> _toggleVibration(bool value) async {
-    setState(() {
-      vibrationEnabled = value;
-    });
-
-    await _bluetooth.setVibration(value);
-    await _saveSettings();
-
-    if (value) {
-      HapticFeedback.mediumImpact();
-    }
-  }
-
-  Future<void> _saveReading() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final readings =
-        prefs.getStringList('geoscan_readings') ?? [];
-
-    final reading = jsonEncode({
-      'time': DateTime.now().toIso8601String(),
-      'signal': smoothedSignal,
-      'target': targetType,
-      'analysis': targetAnalysis,
-      'depth': approximateDepth,
-      'stability': stabilityText,
-      'device': deviceName,
-    });
-
-    readings.add(reading);
-
-    if (readings.length > 100) {
-      readings.removeAt(0);
+  Future<void> calibrate() async {
+    if (!connected) {
+      _showMessage('يجب الاتصال بجهاز ESP32 أولًا');
+      return;
     }
 
-    await prefs.setStringList(
-      'geoscan_readings',
-      readings,
-    );
+    if (scanning) {
+      _showMessage('أوقف المسح أولًا');
+      return;
+    }
+
+    setState(() {
+      calibrating = true;
+      deviceStatus = 'معايرة';
+    });
+
+    final bool result =
+        await _bluetooth.calibrate();
 
     if (!mounted) return;
 
-    if (vibrationEnabled) {
-      HapticFeedback.lightImpact();
+    setState(() {
+      calibrating = false;
+      deviceStatus = result ? 'جاهز' : 'متصل';
+    });
+
+    _showMessage(
+      result
+          ? 'تم إرسال أمر المعايرة إلى ESP32'
+          : 'تعذر إرسال أمر المعايرة',
+    );
+  }
+
+  Future<void> changeSensitivity(double value) async {
+    if (!connected || calibrating) return;
+
+    final double safe =
+        value.clamp(0.0, 100.0).toDouble();
+
+    final bool result =
+        await _bluetooth.setSensitivity(safe);
+
+    if (!mounted) return;
+
+    if (result) {
+      setState(() {
+        sensitivity = safe;
+      });
+    } else {
+      _showMessage('تعذر تغيير الحساسية');
+    }
+  }
+
+  Future<void> changeFilter(String value) async {
+    if (!connected || calibrating) return;
+
+    final bool result =
+        await _bluetooth.setFilter(value);
+
+    if (!mounted) return;
+
+    if (result) {
+      setState(() {
+        filter = value;
+      });
+    } else {
+      _showMessage('تعذر تغيير الفلترة');
+    }
+  }
+
+  Future<void> toggleAudio(bool value) async {
+    if (!connected) return;
+
+    final bool result =
+        await _bluetooth.setAudio(value);
+
+    if (!mounted) return;
+
+    if (result) {
+      setState(() {
+        audioEnabled = value;
+      });
+    }
+  }
+
+  Future<void> toggleVibration(bool value) async {
+    if (!connected) return;
+
+    final bool result =
+        await _bluetooth.setVibration(value);
+
+    if (!mounted) return;
+
+    if (result) {
+      setState(() {
+        vibrationEnabled = value;
+      });
+
+      if (value) {
+        HapticFeedback.mediumImpact();
+      }
+    }
+  }
+
+  Future<void> selectTarget(String target) async {
+    final bool result =
+        await _bluetooth.setTarget(target);
+
+    if (!mounted) return;
+
+    if (result) {
+      setState(() {
+        targetType = target;
+      });
+    }
+  }
+
+  void saveReading() {
+    if (!connected) {
+      _showMessage('الجهاز غير متصل');
+      return;
     }
 
-    _showMessage('تم حفظ القراءة بنجاح');
+    if (lastDataTime == null) {
+      _showMessage('لا توجد قراءة مستلمة من ESP32');
+      return;
+    }
+
+    savedReadings.add({
+      'time': DateTime.now().toIso8601String(),
+      'signal': signal,
+      'raw': rawSignal,
+      'baseline': baseline,
+      'stability': stability,
+      'depth': depth,
+      'target': targetType,
+      'status': deviceStatus,
+      'sensitivity': sensitivity,
+      'filter': filter,
+    });
+
+    HapticFeedback.mediumImpact();
+
+    setState(() {});
+
+    _showMessage('تم حفظ القراءة');
   }
 
-  void _openQuickMenu() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF10182B),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(28),
-        ),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 45,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius:
-                        BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(height: 22),
-                const Text(
-                  'التحكم السريع',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                _quickAction(
-                  icon: Icons.tune_rounded,
-                  title: 'المعايرة',
-                  subtitle: 'معايرة الحساس',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _calibrate();
-                  },
-                ),
-                _quickAction(
-                  icon: Icons.save_rounded,
-                  title: 'حفظ القراءة',
-                  subtitle: 'حفظ البيانات الحالية',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _saveReading();
-                  },
-                ),
-                _quickAction(
-                  icon: Icons.refresh_rounded,
-                  title: 'طلب الحالة',
-                  subtitle: 'قراءة حالة ESP32',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _bluetooth.getStatus();
-                    _showMessage(
-                      'تم طلب حالة الجهاز',
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  void resetDisplay() {
+    setState(() {
+      signal = 0;
+      rawSignal = 0;
+      baseline = 0;
+      stability = 0;
+      depth = 0;
+      signalHistory.clear();
+      lastDataTime = null;
+    });
 
-  Widget _quickAction({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      onTap: onTap,
-      leading: Container(
-        width: 46,
-        height: 46,
-        decoration: BoxDecoration(
-          color: signalColor.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Icon(
-          icon,
-          color: signalColor,
-        ),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: const TextStyle(
-          color: Colors.white54,
-        ),
-      ),
-      trailing: const Icon(
-        Icons.chevron_left_rounded,
-        color: Colors.white38,
-      ),
-    );
+    _showMessage('تم تصفير العرض');
   }
 
   void _showMessage(String message) {
@@ -583,316 +579,291 @@ class _ScanScreenState extends State<ScanScreen>
             message,
             textAlign: TextAlign.center,
           ),
+          duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF182238),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
+          backgroundColor: const Color(0xFF101B2C),
         ),
       );
   }
 
+  void _openQuickMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF08111F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(24),
+        ),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'GeoScan AI',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                ListTile(
+                  leading: const Icon(
+                    Icons.sync_rounded,
+                    color: Colors.cyanAccent,
+                  ),
+                  title: const Text(
+                    'معايرة الجهاز',
+                    style: TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    calibrate();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(
+                    Icons.refresh_rounded,
+                    color: Colors.amberAccent,
+                  ),
+                  title: const Text(
+                    'تصفير العرض',
+                    style: TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    resetDisplay();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
-    _signalSubscription?.cancel();
     _dataSubscription?.cancel();
     _connectionSubscription?.cancel();
-    _animationController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF060B18),
+      backgroundColor: const Color(0xFF050A14),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF050A14),
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          'GeoScan AI',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        leading: IconButton(
+          onPressed: _openQuickMenu,
+          icon: const Icon(
+            Icons.tune_rounded,
+            color: Colors.cyanAccent,
+          ),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+            ),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: connected
+                      ? Colors.greenAccent.withOpacity(.10)
+                      : Colors.redAccent.withOpacity(.10),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: connected
+                        ? Colors.greenAccent.withOpacity(.35)
+                        : Colors.redAccent.withOpacity(.35),
+                  ),
+                ),
+                child: Text(
+                  connected ? 'BLE' : 'OFF',
+                  style: TextStyle(
+                    color: connected
+                        ? Colors.greenAccent
+                        : Colors.redAccent,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            Expanded(
-              child: SingleChildScrollView(
-                physics:
-                    const BouncingScrollPhysics(),
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  16,
-                  8,
-                  16,
-                  24,
-                ),
-                child: Column(
-                  children: [
-                    _buildScanner(),
-                    const SizedBox(height: 18),
-                    _buildSignalCards(),
-                    const SizedBox(height: 18),
-                    _buildSignalBar(),
-                    const SizedBox(height: 18),
-                    _buildGraphCard(),
-                    const SizedBox(height: 18),
-                    _buildAnalysisCard(),
-                    const SizedBox(height: 18),
-                    _buildControlsCard(),
-                    const SizedBox(height: 18),
-                    _buildDeviceCard(),
-                    const SizedBox(height: 18),
-                    _buildTechnicalData(),
-                    const SizedBox(height: 18),
-                    _buildNotice(),
-                    const SizedBox(height: 12),
-                  ],
-                ),
-              ),
-            ),
-          ],
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(
+            12,
+            8,
+            12,
+            18,
+          ),
+          child: Column(
+            children: [
+              _buildScanner(),
+              const SizedBox(height: 12),
+              _buildMetrics(),
+              const SizedBox(height: 12),
+              _buildSignalLevel(),
+              const SizedBox(height: 12),
+              _buildSignalGraph(),
+              const SizedBox(height: 12),
+              _buildTargetAnalysis(),
+              const SizedBox(height: 12),
+              _buildStatusCards(),
+              const SizedBox(height: 12),
+              _buildSettings(),
+              const SizedBox(height: 12),
+              _buildControls(),
+              const SizedBox(height: 12),
+              _buildTechnicalData(),
+              const SizedBox(height: 12),
+              _buildNotice(),
+            ],
+          ),
         ),
       ),
-      bottomNavigationBar:
-          _buildBottomNavigation(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _openQuickMenu,
-        backgroundColor: signalColor,
-        child: const Icon(
-          Icons.bolt_rounded,
-          color: Colors.black,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        18,
-        10,
-        18,
-        8,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFF1DDB83),
-                  Color(0xFF00AEEF),
-                ],
-              ),
-              borderRadius:
-                  BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.radar_rounded,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'GeoScan AI',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 21,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  'نظام المسح الذكي',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _connectionBadge(),
-        ],
-      ),
-    );
-  }
-
-  Widget _connectionBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 11,
-        vertical: 8,
-      ),
-      decoration: BoxDecoration(
-        color: connected
-            ? Colors.greenAccent.withValues(
-                alpha: 0.10,
-              )
-            : Colors.redAccent.withValues(
-                alpha: 0.10,
-              ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: connected
-              ? Colors.greenAccent.withValues(
-                  alpha: 0.30,
-                )
-              : Colors.redAccent.withValues(
-                  alpha: 0.30,
-                ),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: connected
-                  ? Colors.greenAccent
-                  : Colors.redAccent,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            connected ? 'متصل' : 'غير متصل',
-            style: TextStyle(
-              color: connected
-                  ? Colors.greenAccent
-                  : Colors.redAccent,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
+      bottomNavigationBar: _buildBottomNavigation(),
     );
   }
 
   Widget _buildScanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        vertical: 20,
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C1324),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(
-          color: Colors.white.withValues(
-            alpha: 0.06,
-          ),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: signalColor.withValues(
-              alpha: 0.07,
-            ),
-            blurRadius: 30,
-            spreadRadius: 3,
-          ),
-        ],
-      ),
+    return _card(
+      padding: const EdgeInsets.all(14),
       child: Column(
         children: [
           Row(
             mainAxisAlignment:
-                MainAxisAlignment.center,
+                MainAxisAlignment.spaceBetween,
             children: [
-              Icon(
-                scanning
-                    ? Icons.sensors_rounded
-                    : Icons.sensors_off_rounded,
-                color: scanning
-                    ? signalColor
-                    : Colors.white38,
-                size: 18,
+              Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'المسح المباشر',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    signalStatus,
+                    style: TextStyle(
+                      color: signalColor,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 7),
-              Text(
-                scanning
-                    ? 'LIVE SCAN'
-                    : 'READY TO SCAN',
-                style: TextStyle(
-                  color: scanning
-                      ? signalColor
-                      : Colors.white54,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.5,
-                ),
+              Icon(
+                connected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_disabled,
+                color: connected
+                    ? Colors.greenAccent
+                    : Colors.redAccent,
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           SizedBox(
-            width: 290,
-            height: 290,
-            child: AnimatedBuilder(
-              animation: _animationController,
-              builder: (context, child) {
-                return CustomPaint(
-                  painter: GeoScannerPainter(
-                    signal: smoothedSignal,
-                    scanning: scanning,
-                    pulse:
-                        _animationController.value,
-                    color: signalColor,
-                  ),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment:
-                          MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          smoothedSignal
-                              .toStringAsFixed(0),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 62,
-                            fontWeight:
-                                FontWeight.w900,
-                            height: 1,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          signalStatus,
-                          style: TextStyle(
-                            color: signalColor,
-                            fontSize: 15,
-                            fontWeight:
-                                FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          selectedTarget,
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+            height: 330,
+            width: double.infinity,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (
+                    BuildContext context,
+                    Widget? child,
+                  ) {
+                    return CustomPaint(
+                      size: const Size(320, 320),
+                      painter: GeoScannerPainter(
+                        signal: signal,
+                        scanning: scanning,
+                        pulse: _pulseController.value,
+                        color: signalColor,
+                      ),
+                    );
+                  },
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      scanning ? 'LIVE SCAN' : 'READY',
+                      style: TextStyle(
+                        color: signalColor,
+                        fontSize: 12,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            scanning
-                ? 'يتم استقبال بيانات ESP32 لحظيًا'
-                : connected
-                    ? 'اضغط بدء المسح للبدء'
-                    : 'اتصل بجهاز ESP32 أولًا',
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 12,
+                    const SizedBox(height: 8),
+                    Text(
+                      signal.toStringAsFixed(0),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 62,
+                        height: .9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      '% SIGNAL',
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      targetType,
+                      style: TextStyle(
+                        color: signalColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
@@ -900,78 +871,71 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildSignalCards() {
+  Widget _buildMetrics() {
     return Row(
       children: [
         Expanded(
-          child: _infoCard(
-            icon: Icons.bolt_rounded,
+          child: _smallMetric(
             title: 'شدة الإشارة',
-            value:
-                '${smoothedSignal.toStringAsFixed(0)}%',
+            value: '${signal.toStringAsFixed(0)}%',
+            icon: Icons.signal_cellular_alt,
             color: signalColor,
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         Expanded(
-          child: _infoCard(
-            icon: Icons.height_rounded,
+          child: _smallMetric(
             title: 'العمق التقريبي',
-            value:
-                '${approximateDepth.toStringAsFixed(1)} m',
+            value: depthText,
+            icon: Icons.height_rounded,
             color: Colors.cyanAccent,
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         Expanded(
-          child: _infoCard(
-            icon: Icons.graphic_eq_rounded,
-            title: 'الاستقرار',
-            value: stabilityText,
-            color: Colors.amberAccent,
+          child: _smallMetric(
+            title: 'استقرار الإشارة',
+            value: '${stability.toStringAsFixed(0)}%',
+            icon: Icons.speed_rounded,
+            color: Colors.greenAccent,
           ),
         ),
       ],
     );
   }
 
-  Widget _infoCard({
-    required IconData icon,
+  Widget _smallMetric({
     required String title,
     required String value,
+    required IconData icon,
     required Color color,
   }) {
     return _card(
-      padding: const EdgeInsets.all(13),
+      height: 82,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 8,
+      ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            icon,
-            color: color,
-            size: 21,
-          ),
-          const SizedBox(height: 10),
+          Icon(icon, color: color, size: 21),
+          const SizedBox(height: 4),
           Text(
             title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: const TextStyle(
               color: Colors.white54,
-              fontSize: 10,
+              fontSize: 8,
             ),
           ),
-          const SizedBox(height: 4),
-          FittedBox(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: TextStyle(
-                color: color,
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-              ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],
@@ -979,61 +943,38 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildSignalBar() {
+  Widget _buildSignalLevel() {
     return _card(
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
         children: [
           _header(
-            'مؤشر الإشارة',
+            'مستوى الإشارة',
             Icons.bar_chart_rounded,
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 12),
           SizedBox(
-            height: 34,
+            height: 32,
             child: Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.end,
               children: List.generate(
-                30,
-                (index) {
-                  final level =
-                      (index + 1) * 100 / 30;
-                  final active =
-                      smoothedSignal >= level;
-
-                  final barColor =
-                      index < 8
-                          ? Colors.redAccent
-                          : index < 16
-                              ? Colors.orangeAccent
-                              : index < 23
-                                  ? Colors.amberAccent
-                                  : Colors.greenAccent;
+                40,
+                (int index) {
+                  final double level =
+                      ((index + 1) / 40) * 100;
+                  final bool active = signal >= level;
 
                   return Expanded(
                     child: AnimatedContainer(
-                      duration: const Duration(
-                        milliseconds: 150,
+                      duration:
+                          const Duration(milliseconds: 120),
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 1,
                       ),
-                      margin:
-                          const EdgeInsets.symmetric(
-                        horizontal: 1.5,
-                      ),
-                      height:
-                          8 + (index % 5) * 5,
                       decoration: BoxDecoration(
                         color: active
-                            ? barColor
-                            : Colors.white
-                                .withValues(
-                                alpha: 0.07,
-                              ),
+                            ? _meterColor(index)
+                            : Colors.white.withOpacity(.06),
                         borderRadius:
-                            BorderRadius.circular(
-                          3,
-                        ),
+                            BorderRadius.circular(4),
                       ),
                     ),
                   );
@@ -1041,30 +982,37 @@ class _ScanScreenState extends State<ScanScreen>
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
+          const SizedBox(height: 7),
+          const Row(
             mainAxisAlignment:
                 MainAxisAlignment.spaceBetween,
-            children: const [
+            children: [
               Text(
                 'ضعيفة',
                 style: TextStyle(
                   color: Colors.redAccent,
-                  fontSize: 10,
+                  fontSize: 9,
                 ),
               ),
               Text(
                 'متوسطة',
                 style: TextStyle(
-                  color: Colors.amberAccent,
-                  fontSize: 10,
+                  color: Colors.orangeAccent,
+                  fontSize: 9,
                 ),
               ),
               Text(
                 'قوية',
                 style: TextStyle(
+                  color: Colors.amberAccent,
+                  fontSize: 9,
+                ),
+              ),
+              Text(
+                'قوية جدًا',
+                style: TextStyle(
                   color: Colors.greenAccent,
-                  fontSize: 10,
+                  fontSize: 9,
                 ),
               ),
             ],
@@ -1074,44 +1022,49 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildGraphCard() {
+  Color _meterColor(int index) {
+    if (index < 10) return Colors.redAccent;
+    if (index < 20) return Colors.orangeAccent;
+    if (index < 30) return Colors.amberAccent;
+    return Colors.greenAccent;
+  }
+
+  Widget _buildSignalGraph() {
     return _card(
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
         children: [
           _header(
             'حركة الإشارة',
             Icons.show_chart_rounded,
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           SizedBox(
-            height: 145,
+            height: 135,
             width: double.infinity,
             child: CustomPaint(
               painter: SignalGraphPainter(
-                values: signalHistory,
-                color: signalColor,
+                values: List<double>.from(signalHistory),
+                lineColor: signalColor,
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           Row(
             mainAxisAlignment:
                 MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                'آخر القراءات',
+                'الآن',
                 style: TextStyle(
                   color: Colors.white38,
-                  fontSize: 10,
+                  fontSize: 9,
                 ),
               ),
               Text(
-                '$receivedPackets حزمة',
+                '${signalHistory.length} قراءة',
                 style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 10,
+                  color: Colors.white38,
+                  fontSize: 9,
                 ),
               ),
             ],
@@ -1121,7 +1074,7 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildAnalysisCard() {
+  Widget _buildTargetAnalysis() {
     return _card(
       child: Column(
         crossAxisAlignment:
@@ -1129,230 +1082,440 @@ class _ScanScreenState extends State<ScanScreen>
         children: [
           _header(
             'تحليل الهدف',
-            Icons.auto_awesome_rounded,
+            Icons.analytics_rounded,
           ),
-          const SizedBox(height: 15),
-          Row(
-            children: [
-              Container(
-                width: 58,
-                height: 58,
-                decoration: BoxDecoration(
-                  color: signalColor.withValues(
-                    alpha: 0.10,
-                  ),
-                  borderRadius:
-                      BorderRadius.circular(18),
-                  border: Border.all(
-                    color: signalColor.withValues(
-                      alpha: 0.25,
-                    ),
-                  ),
-                ),
-                child: Icon(
-                  Icons.search_rounded,
-                  color: signalColor,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'نوع الهدف المحتمل',
-                      style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 11,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      targetType,
-                      style: TextStyle(
-                        color: signalColor,
-                        fontSize: 18,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 12),
           Container(
             width: double.infinity,
-            padding:
-                const EdgeInsets.all(13),
+            padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(
-                alpha: 0.035,
+              color: signalColor.withOpacity(.07),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: signalColor.withOpacity(.18),
               ),
-              borderRadius:
-                  BorderRadius.circular(14),
             ),
             child: Row(
               children: [
-                const Icon(
-                  Icons.analytics_outlined,
-                  color: Colors.white54,
-                  size: 19,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    targetAnalysis,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      height: 1.5,
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: signalColor.withOpacity(.10),
+                    border: Border.all(
+                      color: signalColor.withOpacity(.25),
                     ),
+                  ),
+                  child: Icon(
+                    Icons.radar_rounded,
+                    color: signalColor,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'التحليل الحالي',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        targetAnalysis,
+                        style: TextStyle(
+                          color: signalColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          _targetSelector(),
+          const SizedBox(height: 12),
+          const Text(
+            'نوع الهدف المحتمل',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: targets.map(
+              (String item) {
+                final bool selected =
+                    targetType == item;
+
+                return ChoiceChip(
+                  label: Text(item),
+                  selected: selected,
+                  onSelected: (_) {
+                    selectTarget(item);
+                  },
+                  selectedColor:
+                      Colors.cyanAccent.withOpacity(.16),
+                  backgroundColor:
+                      Colors.white.withOpacity(.04),
+                  labelStyle: TextStyle(
+                    color: selected
+                        ? Colors.cyanAccent
+                        : Colors.white70,
+                    fontSize: 10,
+                  ),
+                  side: BorderSide(
+                    color: selected
+                        ? Colors.cyanAccent
+                        : Colors.white.withOpacity(.12),
+                  ),
+                );
+              },
+            ).toList(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _targetSelector() {
-    const targets = [
-      'تلقائي',
-      'ذهب',
-      'فضة',
-      'نحاس',
-      'معدن',
-      'ماء',
-    ];
-
-    return Wrap(
-      spacing: 7,
-      runSpacing: 7,
-      children: targets.map((target) {
-        final selected =
-            selectedTarget == target;
-
-        return ChoiceChip(
-          label: Text(target),
-          selected: selected,
-          onSelected: (_) {
-            setState(() {
-              selectedTarget = target;
-            });
-
-            _bluetooth.setTarget(target);
-          },
-          selectedColor:
-              signalColor.withValues(
-            alpha: 0.20,
+  Widget _buildStatusCards() {
+    return Row(
+      children: [
+        Expanded(
+          child: _statusCard(
+            'حالة الجهاز',
+            connected ? 'متصل' : 'غير متصل',
+            connected
+                ? Icons.bluetooth_connected
+                : Icons.bluetooth_disabled,
+            connected
+                ? Colors.greenAccent
+                : Colors.redAccent,
           ),
-          backgroundColor:
-              const Color(0xFF111A2D),
-          side: BorderSide(
-            color: selected
-                ? signalColor.withValues(
-                    alpha: 0.45,
-                  )
-                : Colors.white12,
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: _statusCard(
+            'الحساسية',
+            '${sensitivity.toStringAsFixed(0)}%',
+            Icons.tune_rounded,
+            Colors.cyanAccent,
           ),
-          labelStyle: TextStyle(
-            color: selected
-                ? signalColor
-                : Colors.white60,
-            fontSize: 11,
-            fontWeight: selected
-                ? FontWeight.bold
-                : FontWeight.normal,
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: _statusCard(
+            'الفلترة',
+            filter,
+            Icons.filter_alt_rounded,
+            Colors.amberAccent,
           ),
-        );
-      }).toList(),
+        ),
+      ],
     );
   }
 
-  Widget _buildControlsCard() {
+  Widget _statusCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return _card(
+      height: 100,
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisAlignment:
+            MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 21),
+          const SizedBox(height: 5),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 9,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettings() {
     return _card(
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
         children: [
           _header(
-            'التحكم بالمسح',
-            Icons.tune_rounded,
+            'إعدادات المسح',
+            Icons.settings_input_component_rounded,
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(
+                Icons.tune_rounded,
+                color: Colors.cyanAccent,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'الحساسية',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${sensitivity.toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: sensitivity,
+            min: 0,
+            max: 100,
+            divisions: 100,
+            activeColor: Colors.cyanAccent,
+            inactiveColor: Colors.white12,
+            onChanged: connected
+                ? (double value) {
+                    setState(() {
+                      sensitivity = value;
+                    });
+                  }
+                : null,
+            onChangeEnd:
+                connected ? changeSensitivity : null,
+          ),
+          const Divider(color: Colors.white10),
+          Row(
+            children: [
+              const Icon(
+                Icons.filter_alt_rounded,
+                color: Colors.amberAccent,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'الفلترة',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+              const Spacer(),
+              DropdownButton<String>(
+                value: filter,
+                dropdownColor: const Color(0xFF101A2B),
+                underline: const SizedBox(),
+                iconEnabledColor: Colors.amberAccent,
+                style: const TextStyle(
+                  color: Colors.amberAccent,
+                  fontSize: 12,
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'منخفضة',
+                    child: Text('منخفضة'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'متوسطة',
+                    child: Text('متوسطة'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'عالية',
+                    child: Text('عالية'),
+                  ),
+                ],
+                onChanged: connected
+                    ? (String? value) {
+                        if (value != null) {
+                          changeFilter(value);
+                        }
+                      }
+                    : null,
+              ),
+            ],
+          ),
+          const Divider(color: Colors.white10),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'التنبيه الصوتي',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+              ),
+            ),
+            subtitle: const Text(
+              'إرسال الإعداد إلى ESP32',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 9,
+              ),
+            ),
+            value: audioEnabled,
+            activeColor: Colors.cyanAccent,
+            onChanged: connected
+                ? toggleAudio
+                : null,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'الاهتزاز',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+              ),
+            ),
+            subtitle: const Text(
+              'اهتزاز عند تغير الإشارة',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 9,
+              ),
+            ),
+            value: vibrationEnabled,
+            activeColor: Colors.cyanAccent,
+            onChanged: connected
+                ? toggleVibration
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControls() {
+    return _card(
+      child: Column(
+        children: [
+          _header(
+            'التحكم',
+            Icons.gamepad_rounded,
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: SizedBox(
-                  height: 52,
+                  height: 55,
                   child: FilledButton.icon(
-                    onPressed: scanning
-                        ? null
-                        : _startScanning,
+                    onPressed:
+                        connected && !scanning
+                            ? startScan
+                            : null,
                     icon: const Icon(
                       Icons.play_arrow_rounded,
                     ),
                     label: const Text(
                       'بدء المسح',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    style:
-                        FilledButton.styleFrom(
+                    style: FilledButton.styleFrom(
                       backgroundColor:
-                          Colors.greenAccent,
+                          Colors.greenAccent.withOpacity(.12),
                       foregroundColor:
-                          Colors.black,
-                      disabledBackgroundColor:
-                          Colors.white10,
-                      disabledForegroundColor:
-                          Colors.white30,
-                      shape:
-                          RoundedRectangleBorder(
+                          Colors.greenAccent,
+                      side: const BorderSide(
+                        color: Colors.greenAccent,
+                      ),
+                      shape: RoundedRectangleBorder(
                         borderRadius:
-                            BorderRadius.circular(
-                          16,
-                        ),
+                            BorderRadius.circular(16),
                       ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: SizedBox(
-                  height: 52,
+                  height: 55,
                   child: OutlinedButton.icon(
                     onPressed: scanning
-                        ? _stopScanning
+                        ? stopScan
                         : null,
                     icon: const Icon(
                       Icons.stop_rounded,
                     ),
                     label: const Text(
                       'إيقاف',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    style:
-                        OutlinedButton.styleFrom(
+                    style: OutlinedButton.styleFrom(
                       foregroundColor:
                           Colors.redAccent,
-                      disabledForegroundColor:
-                          Colors.white24,
                       side: const BorderSide(
                         color: Colors.redAccent,
                       ),
-                      shape:
-                          RoundedRectangleBorder(
+                      shape: RoundedRectangleBorder(
                         borderRadius:
-                            BorderRadius.circular(
-                          16,
-                        ),
+                            BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 55,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        connected &&
+                                lastDataTime != null
+                            ? saveReading
+                            : null,
+                    icon: const Icon(
+                      Icons.save_rounded,
+                    ),
+                    label: const Text(
+                      'حفظ',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor:
+                          Colors.cyanAccent,
+                      side: const BorderSide(
+                        color: Colors.cyanAccent,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(16),
                       ),
                     ),
                   ),
@@ -1363,329 +1526,104 @@ class _ScanScreenState extends State<ScanScreen>
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
-            height: 48,
+            height: 45,
             child: OutlinedButton.icon(
-              onPressed: _saveReading,
+              onPressed:
+                  connected && !scanning
+                      ? calibrate
+                      : null,
               icon: const Icon(
-                Icons.save_rounded,
+                Icons.sync_rounded,
+                size: 19,
               ),
               label: const Text(
-                'حفظ القراءة الحالية',
+                'معايرة الجهاز',
               ),
-              style:
-                  OutlinedButton.styleFrom(
+              style: OutlinedButton.styleFrom(
                 foregroundColor:
-                    Colors.cyanAccent,
-                side: BorderSide(
-                  color: Colors.cyanAccent
-                      .withValues(alpha: 0.35),
+                    Colors.amberAccent,
+                side: const BorderSide(
+                  color: Colors.amberAccent,
                 ),
-                shape:
-                    RoundedRectangleBorder(
+                shape: RoundedRectangleBorder(
                   borderRadius:
-                      BorderRadius.circular(15),
+                      BorderRadius.circular(14),
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'الحساسية',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          Slider(
-            value: sensitivity,
-            min: 0,
-            max: 100,
-            divisions: 20,
-            activeColor: signalColor,
-            inactiveColor: Colors.white12,
-            label:
-                sensitivity.toStringAsFixed(0),
-            onChanged: _changeSensitivity,
-          ),
-          Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'منخفضة',
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10,
-                ),
-              ),
-              Text(
-                '${sensitivity.toStringAsFixed(0)}%',
-                style: TextStyle(
-                  color: signalColor,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Text(
-                'عالية',
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _settingRow(
-            icon: Icons.filter_alt_rounded,
-            title: 'الفلترة',
-            trailing: DropdownButton<String>(
-              value: filter,
-              dropdownColor:
-                  const Color(0xFF111A2D),
-              underline: const SizedBox(),
-              iconEnabledColor: signalColor,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-              ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'منخفضة',
-                  child: Text('منخفضة'),
-                ),
-                DropdownMenuItem(
-                  value: 'متوسطة',
-                  child: Text('متوسطة'),
-                ),
-                DropdownMenuItem(
-                  value: 'عالية',
-                  child: Text('عالية'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  _changeFilter(value);
-                }
-              },
-            ),
-          ),
-          _settingRow(
-            icon: Icons.volume_up_rounded,
-            title: 'التنبيه الصوتي',
-            trailing: Switch(
-              value: audioEnabled,
-              activeColor: signalColor,
-              onChanged: _toggleAudio,
-            ),
-          ),
-          _settingRow(
-            icon: Icons.vibration_rounded,
-            title: 'الاهتزاز',
-            trailing: Switch(
-              value: vibrationEnabled,
-              activeColor: signalColor,
-              onChanged: _toggleVibration,
             ),
           ),
         ],
       ),
     );
-  }
-
-  Widget _settingRow({
-    required IconData icon,
-    required String title,
-    required Widget trailing,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 5,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(
-          alpha: 0.025,
-        ),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            color: Colors.white54,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          trailing,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDeviceCard() {
-    return _card(
-      child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          _header(
-            'حالة الجهاز',
-            Icons.memory_rounded,
-          ),
-          const SizedBox(height: 15),
-          _dataRow(
-            'الجهاز',
-            deviceName,
-            connected
-                ? Colors.greenAccent
-                : Colors.redAccent,
-          ),
-          _dataRow(
-            'الاتصال',
-            connected ? 'Bluetooth BLE' : 'غير متصل',
-            connected
-                ? Colors.greenAccent
-                : Colors.redAccent,
-          ),
-          _dataRow(
-            'حالة المسح',
-            scanning ? 'نشط' : 'متوقف',
-            scanning
-                ? Colors.amberAccent
-                : Colors.white54,
-          ),
-          _dataRow(
-            'الحزم المستلمة',
-            '$receivedPackets',
-            Colors.cyanAccent,
-          ),
-          _dataRow(
-            'آخر بيانات',
-            lastPacketTime == null
-                ? '--'
-                : _formatTime(
-                    lastPacketTime!,
-                  ),
-            Colors.white70,
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatTime(DateTime time) {
-    final h = time.hour
-        .toString()
-        .padLeft(2, '0');
-    final m = time.minute
-        .toString()
-        .padLeft(2, '0');
-    final s = time.second
-        .toString()
-        .padLeft(2, '0');
-
-    return '$h:$m:$s';
   }
 
   Widget _buildTechnicalData() {
     return _card(
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
         children: [
           _header(
-            'البيانات التقنية',
-            Icons.code_rounded,
+            'بيانات الجهاز',
+            Icons.memory_rounded,
           ),
-          const SizedBox(height: 14),
-          _dataRow(
-            'Signal',
-            smoothedSignal.toStringAsFixed(2),
-            signalColor,
+          const SizedBox(height: 10),
+          _infoRow(
+            'الجهاز',
+            _bluetooth.deviceName,
           ),
-          _dataRow(
-            'Sensitivity',
-            sensitivity.toStringAsFixed(0),
-            Colors.cyanAccent,
+          _infoRow(
+            'حالة الاتصال',
+            connected ? 'متصل' : 'غير متصل',
           ),
-          _dataRow(
-            'Filter',
-            filter,
-            Colors.amberAccent,
+          _infoRow(
+            'الحالة',
+            deviceStatus,
           ),
-          _dataRow(
-            'Target',
-            selectedTarget,
-            Colors.purpleAccent,
+          _infoRow(
+            'Raw Signal',
+            rawSignal.toStringAsFixed(2),
           ),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(
-                alpha: 0.18,
-              ),
-              borderRadius:
-                  BorderRadius.circular(12),
-            ),
-            child: Text(
-              lastRawData.isEmpty
-                  ? 'لا توجد بيانات خام بعد'
-                  : lastRawData,
-              maxLines: 5,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 10,
-                fontFamily: 'monospace',
-                height: 1.5,
-              ),
-            ),
+          _infoRow(
+            'Baseline',
+            baseline.toStringAsFixed(2),
+          ),
+          _infoRow(
+            'Sequence',
+            lastSequence?.toString() ?? '--',
+          ),
+          _infoRow(
+            'القراءات المحفوظة',
+            savedReadings.length.toString(),
           ),
         ],
       ),
     );
   }
 
-  Widget _dataRow(
+  Widget _infoRow(
     String title,
     String value,
-    Color color,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(
+        vertical: 5,
+      ),
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white45,
-                fontSize: 11,
-              ),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 10,
             ),
           ),
+          const Spacer(),
           Flexible(
             child: Text(
               value,
-              textAlign: TextAlign.right,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
+              textAlign: TextAlign.left,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1700,14 +1638,10 @@ class _ScanScreenState extends State<ScanScreen>
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.amberAccent.withValues(
-          alpha: 0.05,
-        ),
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.amberAccent.withOpacity(.05),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: Colors.amberAccent.withValues(
-            alpha: 0.14,
-          ),
+          color: Colors.amberAccent.withOpacity(.14),
         ),
       ),
       child: const Row(
@@ -1717,16 +1651,16 @@ class _ScanScreenState extends State<ScanScreen>
           Icon(
             Icons.info_outline_rounded,
             color: Colors.amberAccent,
-            size: 19,
+            size: 20,
           ),
-          SizedBox(width: 10),
+          SizedBox(width: 9),
           Expanded(
             child: Text(
-              'النتائج المعروضة هي تحليل للإشارة القادمة من الحساس. تحديد نوع المادة والعمق بشكل مؤكد يحتاج إلى اختبار ومعايرة فعلية للجهاز.',
+              'النتيجة المعروضة هي تحليل لإشارة الحساس القادمة من ESP32. تحديد نوع المادة وعمقها بدقة يحتاج إلى معايرة واختبارات ميدانية فعلية.',
               style: TextStyle(
                 color: Colors.white54,
                 fontSize: 10,
-                height: 1.6,
+                height: 1.5,
               ),
             ),
           ),
@@ -1737,20 +1671,27 @@ class _ScanScreenState extends State<ScanScreen>
 
   Widget _card({
     required Widget child,
+    double? height,
     EdgeInsetsGeometry padding =
-        const EdgeInsets.all(16),
+        const EdgeInsets.all(14),
   }) {
     return Container(
       width: double.infinity,
+      height: height,
       padding: padding,
       decoration: BoxDecoration(
-        color: const Color(0xFF0C1324),
-        borderRadius: BorderRadius.circular(22),
+        color: const Color(0xFF08111F),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: Colors.white.withValues(
-            alpha: 0.055,
-          ),
+          color: Colors.white.withOpacity(.07),
         ),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
       ),
       child: child,
     );
@@ -1762,29 +1703,18 @@ class _ScanScreenState extends State<ScanScreen>
   ) {
     return Row(
       children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: signalColor.withValues(
-              alpha: 0.09,
-            ),
-            borderRadius:
-                BorderRadius.circular(10),
-          ),
-          child: Icon(
-            icon,
-            color: signalColor,
-            size: 18,
-          ),
+        Icon(
+          icon,
+          color: Colors.cyanAccent,
+          size: 19,
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 7),
         Text(
           title,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
           ),
         ),
       ],
@@ -1793,46 +1723,51 @@ class _ScanScreenState extends State<ScanScreen>
 
   Widget _buildBottomNavigation() {
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF080E1C),
+      decoration: const BoxDecoration(
+        color: Color(0xFF050B15),
         border: Border(
           top: BorderSide(
-            color: Colors.white.withValues(
-              alpha: 0.06,
-            ),
+            color: Colors.white10,
           ),
         ),
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 67,
+          height: 65,
           child: Row(
             children: [
               _navItem(
                 Icons.home_rounded,
                 'الرئيسية',
                 false,
+                () => _showMessage('الرئيسية'),
               ),
               _navItem(
                 Icons.history_rounded,
                 'السجل',
                 false,
+                () => _showMessage(
+                  'السجل - ${savedReadings.length} قراءة',
+                ),
               ),
               _navItem(
                 Icons.radar_rounded,
                 'المسح',
                 true,
+                () {},
               ),
               _navItem(
                 Icons.analytics_rounded,
                 'التحليل',
                 false,
+                () => _showMessage('التحليل'),
               ),
               _navItem(
                 Icons.settings_rounded,
                 'الإعدادات',
                 false,
+                () => _showMessage('الإعدادات'),
               ),
             ],
           ),
@@ -1844,37 +1779,32 @@ class _ScanScreenState extends State<ScanScreen>
   Widget _navItem(
     IconData icon,
     String label,
-    bool active,
+    bool selected,
+    VoidCallback onTap,
   ) {
-    final color = active
-        ? signalColor
-        : Colors.white38;
-
     return Expanded(
       child: InkWell(
-        onTap: () {
-          if (active) return;
-
-          _showMessage(
-            '$label — التنقل متاح من الشاشة الرئيسية',
-          );
-        },
+        onTap: onTap,
         child: Column(
           mainAxisAlignment:
               MainAxisAlignment.center,
           children: [
             Icon(
               icon,
-              color: color,
-              size: 21,
+              size: 22,
+              color: selected
+                  ? Colors.cyanAccent
+                  : Colors.white38,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               label,
               style: TextStyle(
-                color: color,
-                fontSize: 9,
-                fontWeight: active
+                color: selected
+                    ? Colors.cyanAccent
+                    : Colors.white38,
+                fontSize: 8,
+                fontWeight: selected
                     ? FontWeight.bold
                     : FontWeight.normal,
               ),
@@ -1885,6 +1815,10 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 }
+
+// ============================================================
+// الدائرة الرئيسية للماسح
+// ============================================================
 
 class GeoScannerPainter extends CustomPainter {
   final double signal;
@@ -1900,22 +1834,16 @@ class GeoScannerPainter extends CustomPainter {
   });
 
   @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
-    final center = Offset(
-      size.width / 2,
-      size.height / 2,
-    );
+  void paint(Canvas canvas, Size size) {
+    final Offset center =
+        Offset(size.width / 2, size.height / 2);
 
-    final radius =
-        math.min(size.width, size.height) / 2 -
-            12;
+    final double radius =
+        math.min(size.width, size.height) * .43;
 
-    final backgroundPaint = Paint()
+    final Paint backgroundPaint = Paint()
       ..style = PaintingStyle.fill
-      ..color = const Color(0xFF07101F);
+      ..color = const Color(0xFF06101C);
 
     canvas.drawCircle(
       center,
@@ -1923,40 +1851,115 @@ class GeoScannerPainter extends CustomPainter {
       backgroundPaint,
     );
 
-    final ringPaint = Paint()
+    final Paint outerGlow = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
+      ..strokeWidth = 3
+      ..color = color.withOpacity(.20);
 
-    final rect = Rect.fromCircle(
-      center: center,
-      radius: radius,
+    canvas.drawCircle(
+      center,
+      radius + 7,
+      outerGlow,
     );
 
-    final colors = [
-      Colors.greenAccent,
-      Colors.amberAccent,
-      Colors.orangeAccent,
+    final Paint ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    final List<Color> colors = <Color>[
       Colors.redAccent,
+      Colors.orangeAccent,
+      Colors.amberAccent,
+      Colors.greenAccent,
     ];
 
-    final sweep = math.pi * 2;
-
     for (int i = 0; i < 4; i++) {
-      ringPaint.color = colors[i]
-          .withValues(alpha: 0.75);
+      ring.color = colors[i].withOpacity(.75);
+
+      final double start =
+          -math.pi / 2 +
+          i * (math.pi * 2 / 4);
 
       canvas.drawArc(
-        rect,
-        -math.pi / 2 +
-            (sweep * i / 4),
-        sweep / 4 - 0.035,
+        Rect.fromCircle(
+          center: center,
+          radius: radius,
+        ),
+        start,
+        math.pi * 2 / 4 - .08,
         false,
-        ringPaint,
+        ring,
       );
     }
 
-    final innerPaint = Paint()
+    final Paint gridPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
-      ..color = Colors.white.withValues(
-        
+      ..color = Colors.white.withOpacity(.07);
+
+    for (int i = 1; i <= 3; i++) {
+      canvas.drawCircle(
+        center,
+        radius * i / 3,
+        gridPaint,
+      );
+    }
+
+    canvas.drawLine(
+      Offset(center.dx - radius, center.dy),
+      Offset(center.dx + radius, center.dy),
+      gridPaint,
+    );
+
+    canvas.drawLine(
+      Offset(center.dx, center.dy - radius),
+      Offset(center.dx, center.dy + radius),
+      gridPaint,
+    );
+
+    if (scanning) {
+      final double scanRadius =
+          radius * (.25 + pulse * .65);
+
+      final Paint scanPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = color.withOpacity(
+          .35 * (1 - pulse) + .10,
+        );
+
+      canvas.drawCircle(
+        center,
+        scanRadius,
+        scanPaint,
+      );
+    }
+
+    final Paint centerPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withOpacity(.85);
+
+    canvas.drawCircle(
+      center,
+      4,
+      centerPaint,
+    );
+
+    final Paint needlePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..color = color;
+
+    final double angle =
+        -math.pi / 2 +
+        (signal / 100) * math.pi * 2;
+
+    canvas.drawLine(
+      center,
+      Offset(
+        center.dx + math.cos(angle) * radius * .72,
+        center.dy + math.sin(angle) * radius * .72,
+      ),
+      needlePaint,
+    );
