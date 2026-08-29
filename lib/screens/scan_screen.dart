@@ -21,18 +21,17 @@ class _ScanScreenState extends State<ScanScreen>
   StreamSubscription<String>? _dataSubscription;
   StreamSubscription<bool>? _connectionSubscription;
 
-  late final AnimationController _pulseController;
+  late AnimationController _radarController;
 
   final List<double> signalHistory = <double>[];
   final List<Map<String, dynamic>> savedReadings =
       <Map<String, dynamic>>[];
 
-  double signal = 0;
-  double rawSignal = 0;
-  double baseline = 0;
-  double stability = 0;
-  double depth = 0;
-  double sensitivity = 75;
+  double signal = 0.0;
+  double rawSignal = 0.0;
+  double stability = 0.0;
+  double depth = 0.0;
+  double sensitivity = 75.0;
 
   bool scanning = false;
   bool connected = false;
@@ -44,39 +43,52 @@ class _ScanScreenState extends State<ScanScreen>
   String deviceStatus = 'غير متصل';
   String targetType = 'غير محدد';
 
-  DateTime? lastDataTime;
-  int? lastSequence;
-
-  final List<String> targets = <String>[
-    'ذهب',
-    'معدن',
-    'فضة',
-    'نحاس',
-    'ألماس',
-    'ماء',
-  ];
+  int receivedPackets = 0;
+  DateTime? lastReceivedAt;
 
   @override
   void initState() {
     super.initState();
 
-    _pulseController = AnimationController(
+    _radarController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
+      duration: const Duration(seconds: 3),
+    )..repeat();
+
+    _listenToBluetooth();
 
     connected = _bluetooth.isConnected;
-    deviceStatus = connected ? 'متصل' : 'غير متصل';
+    if (connected) {
+      deviceStatus = 'متصل';
+    }
+  }
 
+  @override
+  void dispose() {
+    _dataSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    _radarController.dispose();
+    super.dispose();
+  }
+
+  // ============================================================
+  // Bluetooth
+  // ============================================================
+
+  void _listenToBluetooth() {
     _dataSubscription = _bluetooth.dataStream.listen(
-      _handleIncomingData,
-      onError: (_) {},
+      _handleDeviceData,
+      onError: (Object error) {
+        debugPrint('GeoScan AI data error: $error');
+      },
     );
 
     _connectionSubscription =
         _bluetooth.connectionStream.listen(
       _handleConnectionState,
-      onError: (_) {},
+      onError: (Object error) {
+        debugPrint('GeoScan AI connection error: $error');
+      },
     );
   }
 
@@ -86,160 +98,160 @@ class _ScanScreenState extends State<ScanScreen>
     setState(() {
       connected = value;
 
-      if (value) {
-        deviceStatus = 'متصل';
-      } else {
+      if (!value) {
         scanning = false;
         calibrating = false;
         deviceStatus = 'غير متصل';
-        signal = 0;
-        rawSignal = 0;
-        baseline = 0;
-        stability = 0;
-        depth = 0;
+
+        signal = 0.0;
+        rawSignal = 0.0;
+        stability = 0.0;
+        depth = 0.0;
+
         signalHistory.clear();
-        lastDataTime = null;
+        receivedPackets = 0;
+        lastReceivedAt = null;
+      } else {
+        deviceStatus = 'متصل';
       }
     });
   }
 
-  void _handleIncomingData(String text) {
+  void _handleDeviceData(String rawData) {
     if (!mounted) return;
 
-    final String cleaned = text.trim();
+    final text = rawData.trim();
 
-    if (cleaned.isEmpty) return;
+    if (text.isEmpty) return;
 
-    Map<String, dynamic> data = <String, dynamic>{};
+    debugPrint('GeoScan AI <- ESP32: $text');
+
+    receivedPackets++;
+    lastReceivedAt = DateTime.now();
+
+    dynamic decoded;
 
     try {
-      final dynamic decoded = jsonDecode(cleaned);
-
-      if (decoded is Map) {
-        data = Map<String, dynamic>.from(decoded);
-      }
+      decoded = jsonDecode(text);
     } catch (_) {
-      final double? direct = double.tryParse(
-        cleaned.replaceAll(',', '.'),
-      );
+      final match = RegExp(
+        r'[-+]?\d*\.?\d+',
+      ).firstMatch(text);
 
-      if (direct != null) {
-        data['signal'] = direct;
+      if (match != null) {
+        final value = double.tryParse(
+          match.group(0)!,
+        );
+
+        if (value != null) {
+          _updateSignalOnly(value);
+        }
+      }
+
+      return;
+    }
+
+    if (decoded is! Map) {
+      return;
+    }
+
+    final data = Map<String, dynamic>.from(decoded);
+
+    final incomingSignal = data.containsKey('signal')
+        ? _toDouble(data['signal'])
+        : data.containsKey('value')
+            ? _toDouble(data['value'])
+            : data.containsKey('strength')
+                ? _toDouble(data['strength'])
+                : signal;
+
+    final incomingRaw = data.containsKey('raw')
+        ? _toDouble(data['raw'])
+        : incomingSignal;
+
+    final incomingStability = data.containsKey('stability')
+        ? _toDouble(data['stability'])
+        : stability;
+
+    final incomingDepth = data.containsKey('depth')
+        ? _toDouble(data['depth'])
+        : depth;
+
+    final incomingStatus = data.containsKey('status')
+        ? data['status'].toString().trim()
+        : deviceStatus;
+
+    final incomingTarget = data.containsKey('target')
+        ? data['target'].toString().trim()
+        : targetType;
+
+    bool incomingScanning = scanning;
+
+    if (data.containsKey('scanning')) {
+      final value = data['scanning'];
+
+      if (value is bool) {
+        incomingScanning = value;
+      } else {
+        final valueText = value.toString().toLowerCase();
+
+        incomingScanning =
+            valueText == 'true' ||
+            valueText == '1' ||
+            valueText == 'scan' ||
+            valueText == 'scanning' ||
+            valueText == 'يمسح' ||
+            valueText == 'مسح';
+      }
+    } else {
+      final status = incomingStatus.toLowerCase();
+
+      if (status == 'scanning' ||
+          status == 'scan' ||
+          incomingStatus == 'يمسح' ||
+          incomingStatus == 'مسح') {
+        incomingScanning = true;
       }
     }
 
-    if (data.isEmpty) return;
-
-    final double incomingSignal = _readDouble(
-      data,
-      <String>[
-        'signal',
-        'value',
-        'strength',
-        'reading',
-      ],
-      signal,
-    );
-
-    final double incomingRaw = _readDouble(
-      data,
-      <String>[
-        'raw',
-        'rawSignal',
-      ],
-      rawSignal,
-    );
-
-    final double incomingBaseline = _readDouble(
-      data,
-      <String>[
-        'baseline',
-        'base',
-      ],
-      baseline,
-    );
-
-    final double incomingStability = _readDouble(
-      data,
-      <String>[
-        'stability',
-        'stable',
-      ],
-      stability,
-    );
-
-    final double incomingDepth = _readDouble(
-      data,
-      <String>[
-        'depth',
-        'distance',
-      ],
-      depth,
-    );
-
-    final double safeSignal =
+    final safeSignal =
         incomingSignal.clamp(0.0, 100.0).toDouble();
 
-    final double safeStability =
+    final safeRaw =
+        incomingRaw.clamp(0.0, 100.0).toDouble();
+
+    final safeStability =
         incomingStability.clamp(0.0, 100.0).toDouble();
 
-    final double safeDepth =
+    final safeDepth =
         incomingDepth.isFinite && incomingDepth >= 0
             ? incomingDepth
-            : 0;
+            : 0.0;
 
-    final String status =
-        data['status']?.toString().trim() ?? '';
+    final displayedSignal = signal == 0.0
+        ? safeSignal
+        : (signal * 0.72) + (safeSignal * 0.28);
 
-    final String target =
-        data['target']?.toString().trim() ?? '';
-
-    final dynamic scanValue = data['scanning'];
-
-    final bool incomingScanning =
-        scanValue == true ||
-        status.toLowerCase() == 'scanning' ||
-        status.toLowerCase() == 'scan' ||
-        status == 'يمسح' ||
-        status == 'مسح';
-
-    final int? sequence = _readInt(
-      data,
-      <String>[
-        'sequence',
-        'seq',
-      ],
-    );
-
-    final double displayedSignal =
-        signal == 0
-            ? safeSignal
-            : signal * 0.70 + safeSignal * 0.30;
-
-    final double finalSignal =
+    final finalSignal =
         displayedSignal.clamp(0.0, 100.0).toDouble();
+
+    if (!mounted) return;
 
     setState(() {
       signal = finalSignal;
-      rawSignal = incomingRaw;
-      baseline = incomingBaseline;
+      rawSignal = safeRaw;
       stability = safeStability;
       depth = safeDepth;
 
-      if (status.isNotEmpty) {
-        deviceStatus = status;
-      } else {
-        deviceStatus =
-            incomingScanning ? 'يمسح' : 'متصل';
-      }
-
-      if (target.isNotEmpty) {
-        targetType = target;
-      }
+      deviceStatus = incomingStatus.isEmpty
+          ? (incomingScanning ? 'يمسح' : 'متصل')
+          : incomingStatus;
 
       scanning = incomingScanning;
-      lastSequence = sequence;
-      lastDataTime = DateTime.now();
+
+      if (incomingTarget.isNotEmpty) {
+        targetType = incomingTarget;
+      }
 
       if (signalHistory.length >= 80) {
         signalHistory.removeAt(0);
@@ -249,78 +261,333 @@ class _ScanScreenState extends State<ScanScreen>
     });
   }
 
-  double _readDouble(
-    Map<String, dynamic> data,
-    List<String> keys,
-    double fallback,
-  ) {
-    for (final String key in keys) {
-      if (!data.containsKey(key)) continue;
+  void _updateSignalOnly(double value) {
+    if (!mounted) return;
 
-      final dynamic value = data[key];
+    final safe = value.clamp(0.0, 100.0).toDouble();
 
-      if (value is num) {
-        return value.toDouble();
+    final displayed = signal == 0.0
+        ? safe
+        : (signal * 0.72) + (safe * 0.28);
+
+    final finalSignal =
+        displayed.clamp(0.0, 100.0).toDouble();
+
+    setState(() {
+      rawSignal = safe;
+      signal = finalSignal;
+
+      if (signalHistory.length >= 80) {
+        signalHistory.removeAt(0);
       }
 
-      final double? parsed = double.tryParse(
-        value.toString().replaceAll(',', '.').trim(),
+      signalHistory.add(finalSignal);
+    });
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value.toString().replaceAll(',', '.').trim(),
+        ) ??
+        0.0;
+  }
+
+  // ============================================================
+  // Real commands
+  // ============================================================
+
+  Future<void> startScan() async {
+    if (!connected) {
+      _showMessage('يجب الاتصال بجهاز ESP32 أولًا');
+      return;
+    }
+
+    if (calibrating) {
+      _showMessage('انتظر حتى تنتهي المعايرة');
+      return;
+    }
+
+    if (scanning) {
+      return;
+    }
+
+    try {
+      final success =
+          await _bluetooth.startScanning();
+
+      if (!mounted) return;
+
+      if (!success) {
+        _showMessage(
+          'تعذر إرسال أمر بدء المسح إلى ESP32',
+        );
+        return;
+      }
+
+      setState(() {
+        scanning = true;
+        deviceStatus = 'يمسح';
+        signalHistory.clear();
+      });
+
+      _showMessage('بدأ المسح الحقيقي');
+    } catch (e) {
+      debugPrint('Start scan error: $e');
+      _showMessage('حدث خطأ أثناء بدء المسح');
+    }
+  }
+
+  Future<void> stopScan() async {
+    if (!connected) {
+      return;
+    }
+
+    try {
+      final success =
+          await _bluetooth.stopScanning();
+
+      if (!mounted) return;
+
+      if (!success) {
+        _showMessage(
+          'تعذر إرسال أمر إيقاف المسح إلى ESP32',
+        );
+        return;
+      }
+
+      setState(() {
+        scanning = false;
+        deviceStatus = 'متوقف';
+      });
+
+      _showMessage('تم إيقاف المسح');
+    } catch (e) {
+      debugPrint('Stop scan error: $e');
+      _showMessage('حدث خطأ أثناء إيقاف المسح');
+    }
+  }
+
+  Future<void> calibrate() async {
+    if (!connected) {
+      _showMessage('يجب الاتصال بجهاز ESP32 أولًا');
+      return;
+    }
+
+    if (scanning) {
+      _showMessage(
+        'أوقف المسح أولًا ثم قم بالمعايرة',
+      );
+      return;
+    }
+
+    setState(() {
+      calibrating = true;
+      deviceStatus = 'معايرة';
+      signalHistory.clear();
+      signal = 0.0;
+      rawSignal = 0.0;
+      depth = 0.0;
+    });
+
+    try {
+      final success =
+          await _bluetooth.sendCommand(
+        'CALIBRATE',
       );
 
-      if (parsed != null) {
-        return parsed;
-      }
-    }
+      if (!mounted) return;
 
-    return fallback;
-  }
+      setState(() {
+        calibrating = false;
+        deviceStatus =
+            success ? 'جاهز' : 'متصل';
 
-  int? _readInt(
-    Map<String, dynamic> data,
-    List<String> keys,
-  ) {
-    for (final String key in keys) {
-      if (!data.containsKey(key)) continue;
+        if (success) {
+          stability = 100.0;
+        }
+      });
 
-      final dynamic value = data[key];
-
-      if (value is int) {
-        return value;
-      }
-
-      if (value is num) {
-        return value.round();
-      }
-
-      return int.tryParse(
-        value.toString().trim(),
+      _showMessage(
+        success
+            ? 'تم إرسال أمر المعايرة إلى ESP32'
+            : 'تعذر إرسال أمر المعايرة',
       );
-    }
+    } catch (e) {
+      debugPrint('Calibration error: $e');
 
-    return null;
+      if (!mounted) return;
+
+      setState(() {
+        calibrating = false;
+        deviceStatus =
+            connected ? 'متصل' : 'غير متصل';
+      });
+
+      _showMessage('تعذر تنفيذ المعايرة');
+    }
   }
 
-  bool get hasRecentData {
-    if (lastDataTime == null) {
-      return false;
+  Future<void> changeSensitivity(
+    double value,
+  ) async {
+    if (!connected || calibrating) {
+      return;
     }
 
-    return DateTime.now()
-            .difference(lastDataTime!)
-            .inSeconds <
-        3;
+    final safe =
+        value.clamp(0.0, 100.0).toDouble();
+
+    final success =
+        await _bluetooth.setSensitivity(safe);
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        sensitivity = safe;
+      });
+    } else {
+      _showMessage('تعذر تغيير الحساسية');
+    }
   }
+
+  Future<void> changeFilter(
+    String value,
+  ) async {
+    if (!connected || calibrating) {
+      return;
+    }
+
+    final success =
+        await _bluetooth.setFilter(value);
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        filter = value;
+      });
+    } else {
+      _showMessage('تعذر تغيير الفلترة');
+    }
+  }
+
+  Future<void> toggleAudio(
+    bool value,
+  ) async {
+    if (!connected) {
+      return;
+    }
+
+    final success =
+        await _bluetooth.setAudio(value);
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        audioEnabled = value;
+      });
+    } else {
+      _showMessage('تعذر تغيير التنبيه الصوتي');
+    }
+  }
+
+  Future<void> toggleVibration(
+    bool value,
+  ) async {
+    if (!connected) {
+      return;
+    }
+
+    final success =
+        await _bluetooth.setVibration(value);
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        vibrationEnabled = value;
+      });
+
+      if (value) {
+        HapticFeedback.mediumImpact();
+      }
+    } else {
+      _showMessage('تعذر تغيير الاهتزاز');
+    }
+  }
+
+  // ============================================================
+  // Local save
+  // ============================================================
+
+  void saveReading() {
+    if (!connected) {
+      _showMessage(
+        'لا يمكن حفظ قراءة والجهاز غير متصل',
+      );
+      return;
+    }
+
+    if (lastReceivedAt == null) {
+      _showMessage(
+        'لا توجد بيانات مستلمة من ESP32 بعد',
+      );
+      return;
+    }
+
+    setState(() {
+      savedReadings.add({
+        'signal': signal,
+        'raw': rawSignal,
+        'stability': stability,
+        'depth': depth,
+        'target': targetType,
+        'status': deviceStatus,
+        'sensitivity': sensitivity,
+        'filter': filter,
+        'time': DateTime.now(),
+      });
+    });
+
+    HapticFeedback.mediumImpact();
+
+    _showMessage(
+      'تم حفظ القراءة رقم ${savedReadings.length}',
+    );
+  }
+
+  void resetReading() {
+    setState(() {
+      signal = 0.0;
+      rawSignal = 0.0;
+      stability = 0.0;
+      depth = 0.0;
+      signalHistory.clear();
+    });
+
+    _showMessage('تم تصفير العرض');
+  }
+
+  // ============================================================
+  // UI helpers
+  // ============================================================
 
   Color get signalColor {
-    if (signal < 20) {
+    if (signal < 25) {
       return Colors.redAccent;
     }
 
-    if (signal < 40) {
+    if (signal < 50) {
       return Colors.orangeAccent;
     }
 
-    if (signal < 65) {
+    if (signal < 75) {
       return Colors.amberAccent;
     }
 
@@ -333,349 +600,64 @@ class _ScanScreenState extends State<ScanScreen>
     }
 
     if (calibrating) {
-      return 'جاري المعايرة';
-    }
-
-    if (scanning && !hasRecentData) {
-      return 'بانتظار البيانات';
+      return 'معايرة';
     }
 
     if (!scanning) {
-      return 'جاهز للمسح';
+      return 'جاهز';
     }
 
-    if (signal < 20) {
-      return 'إشارة ضعيفة';
+    if (signal < 25) {
+      return 'ضعيفة';
     }
 
-    if (signal < 40) {
-      return 'إشارة متوسطة';
+    if (signal < 50) {
+      return 'متوسطة';
     }
 
-    if (signal < 65) {
-      return 'إشارة جيدة';
+    if (signal < 75) {
+      return 'جيدة';
     }
 
-    if (signal < 85) {
-      return 'إشارة قوية';
-    }
-
-    return 'إشارة قوية جدًا';
+    return 'قوية';
   }
 
-  String get targetAnalysis {
+  String get targetStatus {
     if (!connected) {
-      return 'الجهاز غير متصل';
+      return 'لا توجد بيانات';
     }
 
-    if (scanning && !hasRecentData) {
-      return 'بانتظار قراءة ESP32';
+    if (lastReceivedAt == null) {
+      return 'بانتظار ESP32';
     }
 
-    if (signal < 20) {
+    if (signal < 25) {
       return 'لا توجد إشارة واضحة';
     }
 
-    if (signal < 40) {
-      return 'تغير ضعيف يحتاج فحصًا';
+    if (signal < 50) {
+      return 'تغير يحتاج إلى فحص';
     }
 
-    if (signal < 65) {
-      return 'تغير متوسط يحتاج تحققًا ميدانيًا';
+    if (signal < 75) {
+      return 'تغير ملحوظ';
     }
 
-    if (signal < 85) {
-      return 'إشارة قوية - افحص الموقع';
-    }
-
-    return 'إشارة قوية جدًا - تحقق ميدانيًا';
+    return 'تغير قوي - تحقق ميدانيًا';
   }
 
-  String get depthText {
-    if (depth <= 0) {
+  String get dataAge {
+    if (lastReceivedAt == null) {
       return '--';
     }
 
-    return '${depth.toStringAsFixed(2)} m';
+    final age =
+        DateTime.now().difference(lastReceivedAt!);
+
+    return '${age.inMilliseconds} ms';
   }
 
-  Future<void> startScan() async {
-    if (!connected) {
-      _showMessage(
-        'يجب الاتصال بجهاز ESP32 أولًا',
-      );
-      return;
-    }
-
-    if (calibrating) {
-      _showMessage(
-        'انتظر حتى تنتهي المعايرة',
-      );
-      return;
-    }
-
-    final bool result =
-        await _bluetooth.startScan();
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        scanning = true;
-        deviceStatus = 'يمسح';
-        signalHistory.clear();
-        lastDataTime = null;
-      });
-
-      _showMessage(
-        'بدأ المسح الحقيقي من ESP32',
-      );
-    } else {
-      _showMessage(
-        'تعذر إرسال أمر بدء المسح',
-      );
-    }
-  }
-
-  Future<void> stopScan() async {
-    if (!connected) {
-      _showMessage('الجهاز غير متصل');
-      return;
-    }
-
-    final bool result =
-        await _bluetooth.stopScan();
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        scanning = false;
-        deviceStatus = 'متوقف';
-      });
-
-      _showMessage('تم إيقاف المسح');
-    } else {
-      _showMessage(
-        'تعذر إرسال أمر الإيقاف',
-      );
-    }
-  }
-
-  Future<void> calibrate() async {
-    if (!connected) {
-      _showMessage(
-        'يجب الاتصال بجهاز ESP32 أولًا',
-      );
-      return;
-    }
-
-    if (scanning) {
-      _showMessage(
-        'أوقف المسح أولًا',
-      );
-      return;
-    }
-
-    setState(() {
-      calibrating = true;
-      deviceStatus = 'معايرة';
-    });
-
-    final bool result =
-        await _bluetooth.calibrate();
-
-    if (!mounted) return;
-
-    setState(() {
-      calibrating = false;
-      deviceStatus =
-          result ? 'جاهز' : 'متصل';
-    });
-
-    _showMessage(
-      result
-          ? 'تم إرسال أمر المعايرة إلى ESP32'
-          : 'تعذر إرسال أمر المعايرة',
-    );
-  }
-
-  Future<void> changeSensitivity(
-    double value,
-  ) async {
-    if (!connected || calibrating) {
-      return;
-    }
-
-    final double safe =
-        value.clamp(0.0, 100.0).toDouble();
-
-    final bool result =
-        await _bluetooth.setSensitivity(safe);
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        sensitivity = safe;
-      });
-    } else {
-      _showMessage(
-        'تعذر تغيير الحساسية',
-      );
-    }
-  }
-
-  Future<void> changeFilter(
-    String value,
-  ) async {
-    if (!connected || calibrating) {
-      return;
-    }
-
-    final bool result =
-        await _bluetooth.setFilter(value);
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        filter = value;
-      });
-    } else {
-      _showMessage(
-        'تعذر تغيير الفلترة',
-      );
-    }
-  }
-
-  Future<void> toggleAudio(
-    bool value,
-  ) async {
-    if (!connected) return;
-
-    final bool result =
-        await _bluetooth.setAudio(value);
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        audioEnabled = value;
-      });
-    }
-  }
-
-  Future<void> toggleVibration(
-    bool value,
-  ) async {
-    if (!connected) return;
-
-    final bool result =
-        await _bluetooth.setVibration(value);
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        vibrationEnabled = value;
-      });
-
-      if (value) {
-        HapticFeedback.mediumImpact();
-      }
-    }
-  }
-
-  Future<void> selectTarget(
-    String target,
-  ) async {
-    if (!connected) {
-      _showMessage(
-        'اتصل بجهاز ESP32 أولًا',
-      );
-      return;
-    }
-
-    final bool result =
-        await _bluetooth.setTarget(target);
-
-    if (!mounted) return;
-
-    if (result) {
-      setState(() {
-        targetType = target;
-      });
-
-      _showMessage(
-        'تم اختيار الهدف: $target',
-      );
-    } else {
-      _showMessage(
-        'تعذر إرسال نوع الهدف',
-      );
-    }
-  }
-
-  void saveReading() {
-    if (!connected) {
-      _showMessage(
-        'الجهاز غير متصل',
-      );
-      return;
-    }
-
-    if (lastDataTime == null) {
-      _showMessage(
-        'لا توجد قراءة مستلمة من ESP32',
-      );
-      return;
-    }
-
-    savedReadings.add(
-      <String, dynamic>{
-        'time':
-            DateTime.now().toIso8601String(),
-        'signal': signal,
-        'raw': rawSignal,
-        'baseline': baseline,
-        'stability': stability,
-        'depth': depth,
-        'target': targetType,
-        'status': deviceStatus,
-        'sensitivity': sensitivity,
-        'filter': filter,
-      },
-    );
-
-    HapticFeedback.mediumImpact();
-
-    setState(() {});
-
-    _showMessage(
-      'تم حفظ القراءة',
-    );
-  }
-
-  void resetDisplay() {
-    setState(() {
-      signal = 0;
-      rawSignal = 0;
-      baseline = 0;
-      stability = 0;
-      depth = 0;
-      signalHistory.clear();
-      lastDataTime = null;
-    });
-
-    _showMessage(
-      'تم تصفير العرض',
-    );
-  }
-
-  void _showMessage(
-    String message,
-  ) {
+  void _showMessage(String message) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
@@ -684,375 +666,271 @@ class _ScanScreenState extends State<ScanScreen>
         SnackBar(
           content: Text(
             message,
-            textAlign: TextAlign.center,
+            textDirection: TextDirection.rtl,
           ),
-          duration:
-              const Duration(seconds: 2),
-          behavior:
-              SnackBarBehavior.floating,
-          backgroundColor:
-              const Color(0xFF101B2C),
+          behavior: SnackBarBehavior.floating,
         ),
       );
   }
 
-  void _openQuickMenu() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor:
-          const Color(0xFF08111F),
-      shape:
-          const RoundedRectangleBorder(
-        borderRadius:
-            BorderRadius.vertical(
-          top: Radius.circular(24),
+  // ============================================================
+  // Main build
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF020711),
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+
+              Expanded(
+                child: SingleChildScrollView(
+                  physics:
+                      const BouncingScrollPhysics(),
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    14,
+                    8,
+                    14,
+                    20,
+                  ),
+                  child: Column(
+                    children: [
+                      _buildScanner(),
+
+                      const SizedBox(height: 10),
+
+                      _buildMeter(),
+
+                      const SizedBox(height: 12),
+
+                      _buildAnalysis(),
+
+                      const SizedBox(height: 12),
+
+                      _buildLikelyTarget(),
+
+                      const SizedBox(height: 12),
+
+                      _buildStatusCards(),
+
+                      const SizedBox(height: 12),
+
+                      _buildSettings(),
+
+                      const SizedBox(height: 12),
+
+                      _buildControls(),
+
+                      const SizedBox(height: 12),
+
+                      _buildTechnicalData(),
+
+                      const SizedBox(height: 12),
+
+                      _buildScientificNotice(),
+                    ],
+                  ),
+                ),
+              ),
+
+              _buildBottomNavigation(),
+            ],
+          ),
         ),
       ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Padding(
-            padding:
-                const EdgeInsets.all(18),
+    );
+  }
+
+  // ============================================================
+  // Header
+  // ============================================================
+
+  Widget _buildHeader() {
+    return Container(
+      height: 76,
+      padding:
+          const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        color: Color(0xFF020711),
+        border: Border(
+          bottom: BorderSide(
+            color: Color(0xFF142235),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _openMenu,
+            icon: const Icon(
+              Icons.menu,
+              color: Colors.white,
+              size: 30,
+            ),
+          ),
+
+          Expanded(
             child: Column(
-              mainAxisSize:
-                  MainAxisSize.min,
+              mainAxisAlignment:
+                  MainAxisAlignment.center,
               children: [
+                ShaderMask(
+                  shaderCallback: (bounds) {
+                    return const LinearGradient(
+                      colors: [
+                        Colors.white,
+                        Color(0xFF75D9FF),
+                      ],
+                    ).createShader(bounds);
+                  },
+                  child: const Text(
+                    'GeoScan AI',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 25,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
                 const Text(
-                  'GeoScan AI',
+                  'المسح المباشر',
                   style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight:
-                        FontWeight.bold,
+                    color: Colors.white60,
+                    fontSize: 12,
                   ),
-                ),
-                const SizedBox(
-                  height: 15,
-                ),
-                ListTile(
-                  leading:
-                      const Icon(
-                    Icons.sync_rounded,
-                    color:
-                        Colors.cyanAccent,
-                  ),
-                  title:
-                      const Text(
-                    'معايرة الجهاز',
-                    style: TextStyle(
-                      color: Colors.white,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.pop(
-                      context,
-                    );
-                    calibrate();
-                  },
-                ),
-                ListTile(
-                  leading:
-                      const Icon(
-                    Icons.refresh_rounded,
-                    color:
-                        Colors.amberAccent,
-                  ),
-                  title:
-                      const Text(
-                    'تصفير العرض',
-                    style: TextStyle(
-                      color: Colors.white,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.pop(
-                      context,
-                    );
-                    resetDisplay();
-                  },
                 ),
               ],
             ),
           ),
-        );
-      },
-    );
-  }
 
-  @override
-  void dispose() {
-    _dataSubscription?.cancel();
-    _connectionSubscription?.cancel();
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    return Scaffold(
-      backgroundColor:
-          const Color(0xFF050A14),
-      appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF050A14),
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'GeoScan AI',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight:
-                FontWeight.w900,
-          ),
-        ),
-        leading: IconButton(
-          onPressed: _openQuickMenu,
-          icon: const Icon(
-            Icons.tune_rounded,
-            color: Colors.cyanAccent,
-          ),
-        ),
-        actions: [
-          Padding(
-            padding:
-                const EdgeInsets.symmetric(
-              horizontal: 12,
-            ),
-            child: Center(
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
-                decoration:
-                    BoxDecoration(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                connected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_disabled,
+                color: connected
+                    ? Colors.greenAccent
+                    : Colors.redAccent,
+                size: 25,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                connected ? 'متصل' : 'غير متصل',
+                style: TextStyle(
                   color: connected
                       ? Colors.greenAccent
-                          .withOpacity(.10)
-                      : Colors.redAccent
-                          .withOpacity(.10),
-                  borderRadius:
-                      BorderRadius.circular(
-                    20,
-                  ),
-                  border:
-                      Border.all(
-                    color: connected
-                        ? Colors.greenAccent
-                            .withOpacity(.35)
-                        : Colors.redAccent
-                            .withOpacity(.35),
-                  ),
-                ),
-                child: Text(
-                  connected
-                      ? 'BLE'
-                      : 'OFF',
-                  style: TextStyle(
-                    color: connected
-                        ? Colors.greenAccent
-                        : Colors.redAccent,
-                    fontSize: 10,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
+                      : Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
                 ),
               ),
+            ],
+          ),
+
+          IconButton(
+            onPressed: _openMore,
+            icon: const Icon(
+              Icons.more_vert,
+              color: Colors.white,
             ),
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics:
-              const BouncingScrollPhysics(),
-          padding:
-              const EdgeInsets.fromLTRB(
-            12,
-            8,
-            12,
-            18,
-          ),
-          child: Column(
-            children: [
-              _buildScanner(),
-              const SizedBox(height: 12),
-              _buildMetrics(),
-              const SizedBox(height: 12),
-              _buildSignalLevel(),
-              const SizedBox(height: 12),
-              _buildSignalGraph(),
-              const SizedBox(height: 12),
-              _buildTargetAnalysis(),
-              const SizedBox(height: 12),
-              _buildStatusCards(),
-              const SizedBox(height: 12),
-              _buildSettings(),
-              const SizedBox(height: 12),
-              _buildControls(),
-              const SizedBox(height: 12),
-              _buildTechnicalData(),
-              const SizedBox(height: 12),
-              _buildNotice(),
-            ],
-          ),
-        ),
-      ),
-      bottomNavigationBar:
-          _buildBottomNavigation(),
     );
   }
 
+  // ============================================================
+  // Main scanner
+  // ============================================================
+
   Widget _buildScanner() {
-    return _card(
-      padding:
-          const EdgeInsets.all(14),
-      child: Column(
+    return SizedBox(
+      height: 360,
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          Row(
-            mainAxisAlignment:
-                MainAxisAlignment
-                    .spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment
-                        .start,
-                children: [
-                  const Text(
-                    'المسح المباشر',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight:
-                          FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 3,
-                  ),
-                  Text(
-                    signalStatus,
-                    style: TextStyle(
-                      color:
-                          signalColor,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-              Icon(
-                connected
-                    ? Icons
-                        .bluetooth_connected
-                    : Icons
-                        .bluetooth_disabled,
-                color: connected
-                    ? Colors.greenAccent
-                    : Colors.redAccent,
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 330,
-            width: double.infinity,
-            child: Stack(
-              alignment:
-                  Alignment.center,
-              children: [
-                AnimatedBuilder(
-                  animation:
-                      _pulseController,
-                  builder:
-                      (
-                    BuildContext context,
-                    Widget? child,
-                  ) {
-                    return CustomPaint(
-                      size:
-                          const Size(
-                        320,
-                        320,
-                      ),
-                      painter:
-                          GeoScannerPainter(
-                        signal: signal,
-                        scanning:
-                            scanning,
-                        pulse:
-                            _pulseController
-                                .value,
-                        color:
-                            signalColor,
-                      ),
-                    );
-                  },
+          AnimatedBuilder(
+            animation: _radarController,
+            builder: (context, child) {
+              return CustomPaint(
+                size: const Size(
+                  double.infinity,
+                  360,
                 ),
-                Column(
-                  mainAxisSize:
-                      MainAxisSize.min,
+                painter: RadarBackgroundPainter(
+                  progress:
+                      _radarController.value,
+                ),
+              );
+            },
+          ),
+
+          CustomPaint(
+            size: const Size(
+              double.infinity,
+              360,
+            ),
+            painter: MainScannerPainter(
+              value: signal,
+              color: signalColor,
+            ),
+          ),
+
+          Positioned(
+            top: 112,
+            child: Column(
+              children: [
+                const Text(
+                  'LIVE SCAN',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 23,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2,
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Text(
+                  '${signal.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    color: signalColor,
+                    fontSize: 58,
+                    fontWeight: FontWeight.w300,
+                    height: 1,
+                  ),
+                ),
+
+                const SizedBox(height: 6),
+
+                Row(
                   children: [
+                    Icon(
+                      scanning
+                          ? Icons.radar
+                          : Icons.pause_circle_outline,
+                      color: signalColor,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 5),
                     Text(
                       scanning
-                          ? 'LIVE SCAN'
-                          : 'READY',
-                      style:
-                          TextStyle(
-                        color:
-                            signalColor,
-                        fontSize: 12,
-                        letterSpacing: 2,
-                        fontWeight:
-                            FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(
-                      height: 8,
-                    ),
-                    Text(
-                      signal
-                          .toStringAsFixed(
-                        0,
-                      ),
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white,
-                        fontSize: 62,
-                        height: .9,
-                        fontWeight:
-                            FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(
-                      height: 4,
-                    ),
-                    const Text(
-                      '% SIGNAL',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.white38,
-                        fontSize: 10,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    const SizedBox(
-                      height: 10,
-                    ),
-                    Text(
-                      targetType,
-                      style:
-                          TextStyle(
-                        color:
-                            signalColor,
-                        fontSize: 12,
-                        fontWeight:
-                            FontWeight.bold,
+                          ? 'إشارة $signalStatus'
+                          : signalStatus,
+                      style: TextStyle(
+                        color: signalColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
@@ -1060,92 +938,102 @@ class _ScanScreenState extends State<ScanScreen>
               ],
             ),
           ),
+
+          Positioned(
+            left: 0,
+            top: 28,
+            child: _buildSignalCard(),
+          ),
+
+          Positioned(
+            right: 0,
+            top: 28,
+            child: _buildDepthCard(),
+          ),
+
+          Positioned(
+            right: 0,
+            top: 180,
+            child: _buildStabilityCard(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMetrics() {
-    return Row(
-      children: [
-        Expanded(
-          child: _smallMetric(
-            title: 'شدة الإشارة',
-            value:
-                '${signal.toStringAsFixed(0)}%',
-            icon:
-                Icons.signal_cellular_alt,
-            color: signalColor,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _smallMetric(
-            title: 'العمق التقريبي',
-            value: depthText,
-            icon:
-                Icons.height_rounded,
-            color:
-                Colors.cyanAccent,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _smallMetric(
-            title: 'استقرار الإشارة',
-            value:
-                '${stability.toStringAsFixed(0)}%',
-            icon:
-                Icons.speed_rounded,
-            color:
-                Colors.greenAccent,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _smallMetric({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return _card(
-      height: 84,
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 5,
-        vertical: 8,
-      ),
+  Widget _buildSignalCard() {
+    return _glassCard(
+      width: 150,
+      height: 145,
       child: Column(
         mainAxisAlignment:
             MainAxisAlignment.center,
         children: [
-          Icon(
-            icon,
-            color: color,
-            size: 21,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            textAlign:
-                TextAlign.center,
-            style:
-                const TextStyle(
-              color: Colors.white54,
-              fontSize: 8,
+          const Text(
+            'شدة الإشارة',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 2),
+
+          const SizedBox(height: 8),
+
+          SizedBox(
+            height: 44,
+            child: Row(
+              mainAxisAlignment:
+                  MainAxisAlignment.center,
+              crossAxisAlignment:
+                  CrossAxisAlignment.end,
+              children:
+                  List.generate(5, (index) {
+                final threshold =
+                    (index + 1) * 20;
+                final active =
+                    signal >= threshold;
+
+                return AnimatedContainer(
+                  duration:
+                      const Duration(
+                    milliseconds: 180,
+                  ),
+                  width: 8,
+                  height:
+                      14.0 + (index * 7),
+                  margin:
+                      const EdgeInsets.symmetric(
+                    horizontal: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? signalColor
+                        : Colors.white12,
+                    borderRadius:
+                        BorderRadius.circular(5),
+                  ),
+                );
+              }),
+            ),
+          ),
+
+          const SizedBox(height: 5),
+
           Text(
-            value,
+            '${signal.toStringAsFixed(1)}%',
             style: TextStyle(
-              color: color,
-              fontSize: 13,
-              fontWeight:
-                  FontWeight.w900,
+              color: signalColor,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          Text(
+            signalStatus,
+            style: TextStyle(
+              color: signalColor,
+              fontSize: 12,
             ),
           ),
         ],
@@ -1153,105 +1041,287 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildSignalLevel() {
-    return _card(
+  Widget _buildDepthCard() {
+    return _glassCard(
+      width: 150,
+      height: 92,
+      child: Column(
+        mainAxisAlignment:
+            MainAxisAlignment.center,
+        children: [
+          const Row(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.gps_fixed,
+                color: Colors.white,
+                size: 20,
+              ),
+              SizedBox(width: 5),
+              Text(
+                'العمق التقريبي',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            depth > 0
+                ? '${depth.toStringAsFixed(2)} m'
+                : '-- m',
+            style: const TextStyle(
+              color: Colors.greenAccent,
+              fontSize: 23,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStabilityCard() {
+    return _glassCard(
+      width: 150,
+      height: 92,
+      child: Column(
+        mainAxisAlignment:
+            MainAxisAlignment.center,
+        children: [
+          const Row(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.graphic_eq,
+                color: Colors.white,
+                size: 20,
+              ),
+              SizedBox(width: 5),
+              Text(
+                'استقرار الإشارة',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            '${stability.toStringAsFixed(0)}%',
+            style: const TextStyle(
+              color: Colors.greenAccent,
+              fontSize: 23,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _glassCard({
+    required double width,
+    required double height,
+    required Widget child,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07121F)
+            .withOpacity(0.94),
+        borderRadius:
+            BorderRadius.circular(18),
+        border: Border.all(
+          color:
+              Colors.cyanAccent.withOpacity(0.22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black
+                .withOpacity(0.35),
+            blurRadius: 15,
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  // ============================================================
+  // Meter
+  // ============================================================
+
+  Widget _buildMeter() {
+    return _panel(
       child: Column(
         children: [
-          _header(
-            'مستوى الإشارة',
-            Icons.bar_chart_rounded,
+          const Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '0',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+              Text(
+                '20',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+              Text(
+                '40',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+              Text(
+                '60',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+              Text(
+                '80',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+              Text(
+                '100',
+                style:
+                    TextStyle(color: Colors.white54),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+
+          const SizedBox(height: 6),
+
           SizedBox(
-            height: 32,
+            height: 28,
             child: Row(
               children:
-                  List.generate(
-                40,
-                (int index) {
-                  final double level =
-                      ((index + 1) /
-                              40) *
-                          100;
+                  List.generate(40, (index) {
+                final value =
+                    index * 2.5;
 
-                  final bool active =
-                      signal >= level;
+                final Color barColor =
+                    value < 25
+                        ? Colors.redAccent
+                        : value < 50
+                            ? Colors.orangeAccent
+                            : value < 75
+                                ? Colors.amberAccent
+                                : Colors.greenAccent;
 
-                  return Expanded(
-                    child:
-                        AnimatedContainer(
-                      duration:
-                          const Duration(
-                        milliseconds: 120,
-                      ),
-                      margin:
-                          const EdgeInsets
-                              .symmetric(
-                        horizontal: 1,
-                      ),
-                      decoration:
-                          BoxDecoration(
-                        color: active
-                            ? _meterColor(
-                                index,
-                              )
-                            : Colors
-                                .white
-                                .withOpacity(
-                                .06,
-                              ),
-                        borderRadius:
-                            BorderRadius
-                                .circular(
-                          4,
-                        ),
-                      ),
+                final active =
+                    signal >= value;
+
+                return Expanded(
+                  child: AnimatedContainer(
+                    duration:
+                        const Duration(
+                      milliseconds: 100,
                     ),
-                  );
-                },
-              ),
+                    margin:
+                        const EdgeInsets.symmetric(
+                      horizontal: 1,
+                    ),
+                    decoration:
+                        BoxDecoration(
+                      color: active
+                          ? barColor
+                          : barColor.withOpacity(
+                              0.10,
+                            ),
+                      borderRadius:
+                          BorderRadius.circular(3),
+                    ),
+                  ),
+                );
+              }),
             ),
+          ),
+
+          const SizedBox(height: 6),
+
+          const Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceAround,
+            children: [
+              Text(
+                'ضعيفة',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+              Text(
+                'متوسطة',
+                style: TextStyle(
+                  color: Colors.orangeAccent,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+              Text(
+                'قوية',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Color _meterColor(int index) {
-    if (index < 8) {
-      return Colors.redAccent;
-    }
+  // ============================================================
+  // Analysis
+  // ============================================================
 
-    if (index < 18) {
-      return Colors.orangeAccent;
-    }
+  Widget _buildAnalysis() {
+    return Column(
+      children: [
+        _buildGraph(),
 
-    if (index < 28) {
-      return Colors.amberAccent;
-    }
+        const SizedBox(height: 10),
 
-    return Colors.greenAccent;
+        _buildTargetAnalysis(),
+      ],
+    );
   }
 
-  Widget _buildSignalGraph() {
-    return _card(
+  Widget _buildGraph() {
+    return _panel(
+      height: 240,
       child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.stretch,
         children: [
-          _header(
+          _sectionTitle(
             'حركة الإشارة',
-            Icons.show_chart_rounded,
+            Icons.show_chart,
           ),
+
           const SizedBox(height: 10),
-          SizedBox(
-            height: 150,
-            width: double.infinity,
+
+          Expanded(
             child: CustomPaint(
-              painter:
-                  SignalGraphPainter(
+              painter: SignalGraphPainter(
                 values: signalHistory,
-                lineColor:
-                    signalColor,
               ),
+              child:
+                  const SizedBox.expand(),
             ),
           ),
         ],
@@ -1260,276 +1330,217 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   Widget _buildTargetAnalysis() {
-    return _card(
-      child: Column(
-        children: [
-          _header(
-            'تحليل الهدف',
-            Icons.radar_rounded,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration:
-                    BoxDecoration(
-                  shape:
-                      BoxShape.circle,
-                  color: signalColor
-                      .withOpacity(.10),
-                  border:
-                      Border.all(
-                    color: signalColor
-                        .withOpacity(
-                      .35,
-                    ),
-                  ),
-                ),
-                child: Icon(
-                  _targetIcon(
-                    targetType,
-                  ),
-                  color:
-                      signalColor,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment
-                          .start,
-                  children: [
-                    Text(
-                      targetType,
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white,
-                        fontSize: 16,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(
-                      height: 5,
-                    ),
-                    Text(
-                      targetAnalysis,
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white60,
-                        fontSize: 11,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children:
-                targets.map(
-              (String target) {
-                final bool selected =
-                    targetType ==
-                        target;
+    final targetSignal =
+        signal.clamp(0.0, 100.0).toDouble();
 
-                return ChoiceChip(
-                  label:
-                      Text(target),
-                  selected:
-                      selected,
-                  onSelected:
-                      (_) {
-                    selectTarget(
-                      target,
-                    );
-                  },
-                  labelStyle:
-                      TextStyle(
-                    color: selected
-                        ? Colors.black
-                        : Colors.white70,
-                    fontSize: 11,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
-                  selectedColor:
-                      signalColor,
-                  backgroundColor:
-                      const Color(
-                    0xFF101A2A,
-                  ),
-                  side:
-                      BorderSide(
-                    color: selected
-                        ? signalColor
-                        : Colors.white12,
-                  ),
-                );
-              },
-            ).toList(),
+    return _panel(
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.stretch,
+        children: [
+          _sectionTitle(
+            'تحليل الهدف',
+            Icons.radar,
+          ),
+
+          const SizedBox(height: 10),
+
+          _targetRow(
+            title: targetType.isEmpty
+                ? 'الهدف'
+                : targetType,
+            value: targetSignal,
+            color: signalColor,
+            icon: Icons.radar,
+          ),
+
+          const SizedBox(height: 8),
+
+          _targetRow(
+            title: 'استقرار الإشارة',
+            value: stability,
+            color: Colors.cyanAccent,
+            icon: Icons.graphic_eq,
+          ),
+
+          const SizedBox(height: 8),
+
+          _targetRow(
+            title: 'الإشارة الخام',
+            value: rawSignal,
+            color: Colors.orangeAccent,
+            icon: Icons.memory,
+          ),
+
+          const SizedBox(height: 10),
+
+          Text(
+            targetStatus,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: signalColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
           ),
         ],
       ),
     );
   }
 
-  IconData _targetIcon(
-    String target,
-  ) {
-    switch (target) {
-      case 'ذهب':
-        return Icons.diamond;
-      case 'فضة':
-        return Icons.circle_outlined;
-      case 'نحاس':
-        return Icons.bolt;
-      case 'ماء':
-        return Icons.water_drop;
-      case 'ألماس':
-        return Icons.diamond_outlined;
-      case 'معدن':
-        return Icons.hardware;
-      default:
-        return Icons.search;
-    }
-  }
+  Widget _targetRow({
+    required String title,
+    required double value,
+    required Color color,
+    required IconData icon,
+  }) {
+    final safe =
+        value.clamp(0.0, 100.0).toDouble();
 
-  Widget _buildStatusCards() {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _statusCard(
-                title: 'حالة الجهاز',
-                value:
-                    connected
-                        ? 'متصل'
-                        : 'غير متصل',
-                icon:
-                    Icons.memory_rounded,
-                color:
-                    connected
-                        ? Colors.greenAccent
-                        : Colors.redAccent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _statusCard(
-                title: 'حالة المسح',
-                value:
-                    scanning
-                        ? 'مباشر'
-                        : 'متوقف',
-                icon:
-                    Icons.radar,
-                color:
-                    scanning
-                        ? Colors.cyanAccent
-                        : Colors.white54,
-              ),
-            ),
-          ],
+    return Container(
+      padding:
+          const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color:
+            Colors.black.withOpacity(0.14),
+        borderRadius:
+            BorderRadius.circular(13),
+        border: Border.all(
+          color:
+              Colors.white.withOpacity(0.06),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _statusCard(
-                title: 'آخر حزمة',
-                value:
-                    lastSequence
-                        ?.toString() ??
-                    '--',
-                icon:
-                    Icons.numbers,
-                color:
-                    Colors.amberAccent,
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 21,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Text(
+                '${safe.toStringAsFixed(0)}%',
+                style: TextStyle(
+                  color: color,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+
+          ClipRRect(
+            borderRadius:
+                BorderRadius.circular(8),
+            child:
+                LinearProgressIndicator(
+              value: safe / 100,
+              minHeight: 7,
+              backgroundColor:
+                  Colors.white10,
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(
+                color,
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _statusCard(
-                title: 'البيانات',
-                value:
-                    hasRecentData
-                        ? 'LIVE'
-                        : '--',
-                icon:
-                    Icons.data_usage,
-                color:
-                    hasRecentData
-                        ? Colors.greenAccent
-                        : Colors.white54,
-              ),
-            ),
-          ],
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _statusCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return _card(
-      height: 88,
-      padding:
-          const EdgeInsets.all(10),
+  // ============================================================
+  // Likely target
+  // ============================================================
+
+  Widget _buildLikelyTarget() {
+    final color = signalColor;
+
+    final title =
+        targetType.isEmpty ||
+                targetType == 'غير محدد'
+            ? 'غير محدد'
+            : targetType;
+
+    return _panel(
       child: Row(
         children: [
-          Icon(
-            icon,
-            color: color,
-            size: 25,
+          Container(
+            width: 92,
+            height: 92,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color:
+                  color.withOpacity(0.07),
+              border: Border.all(
+                color:
+                    color.withOpacity(0.25),
+              ),
+            ),
+            child: Icon(
+              Icons.radar,
+              color: color,
+              size: 50,
+            ),
           ),
-          const SizedBox(width: 9),
+
+          const SizedBox(width: 14),
+
           Expanded(
             child: Column(
-              mainAxisAlignment:
-                  MainAxisAlignment.center,
               crossAxisAlignment:
-                  CrossAxisAlignment
-                      .start,
+                  CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white54,
-                    fontSize: 9,
+                const Text(
+                  'نوع الهدف المحتمل',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
                   ),
                 ),
-                const SizedBox(
-                  height: 4,
-                ),
+
+                const SizedBox(height: 4),
+
                 Text(
-                  value,
-                  maxLines: 1,
-                  overflow:
-                      TextOverflow
-                          .ellipsis,
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 23,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                Text(
+                  '${signal.toStringAsFixed(0)}% مؤشر الإشارة',
                   style: TextStyle(
                     color: color,
                     fontSize: 13,
-                    fontWeight:
-                        FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                const Text(
+                  'هذه قراءة إشارة وليست إثباتًا لنوع المادة.',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
                   ),
                 ),
               ],
@@ -1540,30 +1551,208 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _buildSettings() {
-    return _card(
-      child: Column(
+  // ============================================================
+  // Status cards
+  // ============================================================
+
+  Widget _buildStatusCards() {
+    return SizedBox(
+      height: 108,
+      child: Row(
         children: [
-          _header(
-            'إعدادات الجهاز',
-            Icons.tune_rounded,
+          Expanded(
+            child: _statusCard(
+              icon: Icons.monitor_heart,
+              title: 'الجهاز',
+              value: connected
+                  ? 'متصل'
+                  : 'غير متصل',
+              color: connected
+                  ? Colors.greenAccent
+                  : Colors.redAccent,
+            ),
           ),
-          const SizedBox(height: 8),
-          _settingTile(
-            icon:
-                Icons.sensors_rounded,
-            title: 'الحساسية',
-            trailing: Text(
-              '${sensitivity.toStringAsFixed(0)}%',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.cyanAccent,
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: _statusCard(
+              icon: Icons.tune,
+              title: 'الحساسية',
+              value:
+                  '${sensitivity.toStringAsFixed(0)}%',
+              color: Colors.cyanAccent,
+            ),
+          ),
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: _statusCard(
+              icon: Icons.filter_alt,
+              title: 'الفلترة',
+              value: filter,
+              color: Colors.cyanAccent,
+              onTap: _showFilterDialog,
+            ),
+          ),
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: _statusCard(
+              icon: Icons.volume_up,
+              title: 'التنبيه',
+              value: audioEnabled
+                  ? 'يعمل'
+                  : 'متوقف',
+              color: audioEnabled
+                  ? Colors.greenAccent
+                  : Colors.white38,
+              onTap: () {
+                toggleAudio(
+                  !audioEnabled,
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(width: 5),
+
+          Expanded(
+            child: _statusCard(
+              icon: Icons.vibration,
+              title: 'الاهتزاز',
+              value: vibrationEnabled
+                  ? 'يعمل'
+                  : 'متوقف',
+              color: vibrationEnabled
+                  ? Colors.greenAccent
+                  : Colors.white38,
+              onTap: () {
+                toggleVibration(
+                  !vibrationEnabled,
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+    VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius:
+          BorderRadius.circular(15),
+      child: Container(
+        padding:
+            const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          color:
+              const Color(0xFF07121F),
+          borderRadius:
+              BorderRadius.circular(15),
+          border: Border.all(
+            color: Colors.white10,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment:
+              MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: color,
+              size: 24,
+            ),
+
+            const SizedBox(height: 4),
+
+            Text(
+              title,
+              maxLines: 1,
+              overflow:
+                  TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 9,
+              ),
+            ),
+
+            const SizedBox(height: 3),
+
+            Text(
+              value,
+              maxLines: 1,
+              overflow:
+                  TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
                 fontWeight:
                     FontWeight.bold,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // Settings
+  // ============================================================
+
+  Widget _buildSettings() {
+    return _panel(
+      child: Column(
+        children: [
+          _sectionTitle(
+            'إعدادات المسح',
+            Icons.settings,
           ),
+
+          const SizedBox(height: 10),
+
+          Row(
+            children: [
+              const Icon(
+                Icons.tune,
+                color: Colors.cyanAccent,
+              ),
+
+              const SizedBox(width: 8),
+
+              const Text(
+                'الحساسية',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+
+              const Spacer(),
+
+              Text(
+                '${sensitivity.toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+
           Slider(
             value: sensitivity,
             min: 0,
@@ -1571,118 +1760,111 @@ class _ScanScreenState extends State<ScanScreen>
             divisions: 100,
             activeColor:
                 Colors.cyanAccent,
-            inactiveColor:
-                Colors.white12,
             onChanged:
-                connected &&
-                        !calibrating
+                connected && !calibrating
                     ? changeSensitivity
                     : null,
           ),
+
           const Divider(
-            color: Colors.white10,
-            height: 10,
+            color: Colors.white12,
           ),
-          _settingTile(
-            icon:
-                Icons.filter_alt_rounded,
-            title: 'الفلترة',
-            trailing:
-                DropdownButton<String>(
-              value: filter,
-              dropdownColor:
-                  const Color(
-                0xFF101A2A,
+
+          Row(
+            children: [
+              const Icon(
+                Icons.filter_alt,
+                color: Colors.cyanAccent,
               ),
-              underline:
-                  const SizedBox(),
-              style:
-                  const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
+
+              const SizedBox(width: 8),
+
+              const Text(
+                'الفلترة',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight:
+                      FontWeight.bold,
+                ),
               ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'منخفضة',
-                  child:
-                      Text('منخفضة'),
+
+              const Spacer(),
+
+              DropdownButton<String>(
+                value: filter,
+                dropdownColor:
+                    const Color(0xFF07121F),
+                underline:
+                    const SizedBox(),
+                style: const TextStyle(
+                  color: Colors.white,
                 ),
-                DropdownMenuItem(
-                  value: 'متوسطة',
-                  child:
-                      Text('متوسطة'),
-                ),
-                DropdownMenuItem(
-                  value: 'عالية',
-                  child:
-                      Text('عالية'),
-                ),
-              ],
-              onChanged:
-                  connected
-                      ? (String? value) {
-                          if (value !=
-                              null) {
-                            changeFilter(
-                              value,
-                            );
+                items: const [
+                  DropdownMenuItem(
+                    value: 'منخفضة',
+                    child: Text('منخفضة'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'متوسطة',
+                    child: Text('متوسطة'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'عالية',
+                    child: Text('عالية'),
+                  ),
+                ],
+                onChanged:
+                    connected && !calibrating
+                        ? (value) {
+                            if (value != null) {
+                              changeFilter(
+                                value,
+                              );
+                            }
                           }
-                        }
-                      : null,
-            ),
+                        : null,
+              ),
+            ],
           ),
+
           const Divider(
-            color: Colors.white10,
-            height: 20,
+            color: Colors.white12,
           ),
+
           SwitchListTile(
             contentPadding:
                 EdgeInsets.zero,
-            secondary:
-                const Icon(
-              Icons.volume_up_rounded,
-              color:
-                  Colors.amberAccent,
-            ),
-            title:
-                const Text(
+            title: const Text(
               'التنبيه الصوتي',
-              style:
-                  TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 12,
               ),
             ),
+            secondary: const Icon(
+              Icons.volume_up,
+              color: Colors.cyanAccent,
+            ),
             value: audioEnabled,
-            activeColor:
-                Colors.amberAccent,
             onChanged:
                 connected
                     ? toggleAudio
                     : null,
           ),
+
           SwitchListTile(
             contentPadding:
                 EdgeInsets.zero,
-            secondary:
-                const Icon(
-              Icons.vibration_rounded,
-              color:
-                  Colors.purpleAccent,
-            ),
-            title:
-                const Text(
+            title: const Text(
               'الاهتزاز',
-              style:
-                  TextStyle(
+              style: TextStyle(
                 color: Colors.white,
-                fontSize: 12,
               ),
             ),
-            value:
-                vibrationEnabled,
-            activeColor:
-                Colors.purpleAccent,
+            secondary: const Icon(
+              Icons.vibration,
+              color: Colors.cyanAccent,
+            ),
+            value: vibrationEnabled,
             onChanged:
                 connected
                     ? toggleVibration
@@ -1693,402 +1875,205 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  Widget _settingTile({
-    required IconData icon,
-    required String title,
-    required Widget trailing,
-  }) {
-    return Row(
+  // ============================================================
+  // Controls
+  // ============================================================
+
+  Widget _buildControls() {
+    return Column(
       children: [
-        Icon(
-          icon,
-          color:
-              Colors.white54,
-          size: 20,
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 58,
+                child: FilledButton.icon(
+                  onPressed:
+                      connected &&
+                              !scanning &&
+                              !calibrating
+                          ? startScan
+                          : null,
+                  icon: const Icon(
+                    Icons.play_arrow,
+                  ),
+                  label: const Text(
+                    'بدء المسح',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+                  style:
+                      FilledButton.styleFrom(
+                    backgroundColor:
+                        Colors.greenAccent
+                            .withOpacity(
+                      0.12,
+                    ),
+                    foregroundColor:
+                        Colors.greenAccent,
+                    side:
+                        const BorderSide(
+                      color:
+                          Colors.greenAccent,
+                    ),
+                    shape:
+                        RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(
+                        15,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 7),
+
+            Expanded(
+              child: SizedBox(
+                height: 58,
+                child: OutlinedButton.icon(
+                  onPressed:
+                      scanning
+                          ? stopScan
+                          : null,
+                  icon: const Icon(
+                    Icons.stop,
+                  ),
+                  label: const Text(
+                    'إيقاف المسح',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+                  style:
+                      OutlinedButton.styleFrom(
+                    foregroundColor:
+                        Colors.redAccent,
+                    side:
+                        const BorderSide(
+                      color:
+                          Colors.redAccent,
+                    ),
+                    shape:
+                        RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(
+                        15,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            title,
-            style:
-                const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
+
+        const SizedBox(height: 8),
+
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed:
+                    connected &&
+                            !scanning &&
+                            !calibrating
+                        ? calibrate
+                        : null,
+                icon: calibrating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child:
+                            CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.refresh,
+                      ),
+                label: Text(
+                  calibrating
+                      ? 'جاري المعايرة...'
+                      : 'معايرة الحساس',
+                ),
+                style:
+                    OutlinedButton.styleFrom(
+                  foregroundColor:
+                      Colors.cyanAccent,
+                  side:
+                      const BorderSide(
+                    color:
+                        Colors.cyanAccent,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 8),
+
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed:
+                    connected
+                        ? saveReading
+                        : null,
+                icon: const Icon(
+                  Icons.save,
+                ),
+                label: const Text(
+                  'حفظ القراءة',
+                ),
+                style:
+                    OutlinedButton.styleFrom(
+                  foregroundColor:
+                      Colors.amberAccent,
+                  side:
+                      const BorderSide(
+                    color:
+                        Colors.amberAccent,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 8),
+
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: TextButton.icon(
+            onPressed: resetReading,
+            icon: const Icon(
+              Icons.restart_alt,
+            ),
+            label: const Text(
+              'تصفير العرض',
             ),
           ),
         ),
-        trailing,
       ],
     );
   }
 
-  Widget _buildControls() {
-    return _card(
-      child: Column(
-        children: [
-          _header(
-            'التحكم بالمسح',
-            Icons.play_circle_outline,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child:
-                      FilledButton.icon(
-                    onPressed:
-                        scanning
-                            ? null
-                            : startScan,
-                    icon:
-                        const Icon(
-                      Icons.play_arrow_rounded,
-                    ),
-                    label:
-                        const Text(
-                      'بدء المسح',
-                    ),
-                    style:
-                        FilledButton
-                            .styleFrom(
-                      backgroundColor:
-                          Colors.green,
-                      disabledBackgroundColor:
-                          Colors.white10,
-                      foregroundColor:
-                          Colors.white,
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius
-                                .circular(
-                          14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child:
-                      FilledButton.icon(
-                    onPressed:
-                        scanning
-                            ? stopScan
-                            : null,
-                    icon:
-                        const Icon(
-                      Icons.stop_rounded,
-                    ),
-                    label:
-                        const Text(
-                      'إيقاف',
-                    ),
-                    style:
-                        FilledButton
-                            .styleFrom(
-                      backgroundColor:
-                          Colors.redAccent,
-                      disabledBackgroundColor:
-                          Colors.white10,
-                      foregroundColor:
-                          Colors.white,
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius
-                                .circular(
-                          14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed:
-                      connected
-                          ? saveReading
-                          : null,
-                  icon:
-                      const Icon(
-                    Icons.save_rounded,
-                  ),
-                  label:
-                      const Text(
-                    'حفظ القراءة',
-                  ),
-                  style:
-                      OutlinedButton
-                          .styleFrom(
-                    foregroundColor:
-                        Colors.cyanAccent,
-                    side:
-                        const BorderSide(
-                      color:
-                          Colors.cyanAccent,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius
-                              .circular(
-                        14,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed:
-                      resetDisplay,
-                  icon:
-                      const Icon(
-                    Icons.refresh_rounded,
-                  ),
-                  label:
-                      const Text(
-                    'تصفير',
-                  ),
-                  style:
-                      OutlinedButton
-                          .styleFrom(
-                    foregroundColor:
-                        Colors.white70,
-                    side:
-                        const BorderSide(
-                      color:
-                          Colors.white24,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius
-                              .circular(
-                        14,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  // ============================================================
+  // Technical data
+  // ============================================================
 
   Widget _buildTechnicalData() {
-    return _card(
+    return _panel(
       child: Column(
-        children: [
-          _header(
-            'البيانات التقنية',
-            Icons.memory_rounded,
-          ),
-          const SizedBox(height: 10),
-          _technicalRow(
-            'Raw Signal',
-            rawSignal.toStringAsFixed(2),
-          ),
-          _technicalRow(
-            'Baseline',
-            baseline.toStringAsFixed(2),
-          ),
-          _technicalRow(
-            'Stability',
-            '${stability.toStringAsFixed(1)}%',
-          ),
-          _technicalRow(
-            'Depth',
-            depthText,
-          ),
-          _technicalRow(
-            'Sensitivity',
-            sensitivity
-                .toStringAsFixed(0),
-          ),
-          _technicalRow(
-            'Filter',
-            filter,
-          ),
-          _technicalRow(
-            'Target',
-            targetType,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _technicalRow(
-    String title,
-    String value,
-  ) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 6,
-      ),
-      child: Row(
-        mainAxisAlignment:
-            MainAxisAlignment
-                .spaceBetween,
-        children: [
-          Text(
-            title,
-            style:
-                const TextStyle(
-              color: Colors.white54,
-              fontSize: 10,
-            ),
-          ),
-          Text(
-            value,
-            style:
-                const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight:
-                  FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotice() {
-    return Container(
-      width: double.infinity,
-      padding:
-          const EdgeInsets.all(14),
-      decoration:
-          BoxDecoration(
-        color:
-            Colors.amberAccent
-                .withOpacity(.06),
-        borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
-        border:
-            Border.all(
-          color:
-              Colors.amberAccent
-                  .withOpacity(.18),
-        ),
-      ),
-      child: Row(
         crossAxisAlignment:
-            CrossAxisAlignment.start,
+            CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.info_outline_rounded,
-            color:
-                Colors.amberAccent,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'القراءة المعروضة تعتمد على البيانات الحقيقية القادمة من ESP32 عبر Bluetooth. تحديد نوع الهدف والعمق يحتاج إلى معايرة واختبارات ميدانية.',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white60,
-                fontSize: 10,
-                height: 1.5,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomNavigation() {
-    return Container(
-      decoration:
-          const BoxDecoration(
-        color:
-            Color(0xFF07101D),
-        border:
-            Border(
-          top:
-              BorderSide(
-            color:
-                Colors.white10,
-          ),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 68,
-          child: Row(
-            children: [
-              _navItem(
-                Icons.home_rounded,
-                'الرئيسية',
-                false,
-              ),
-              _navItem(
-                Icons.history_rounded,
-                'السجلات',
-                false,
-              ),
-              _navItem(
-                Icons.radar_rounded,
-                'المسح',
-                true,
-              ),
-              _navItem(
-                Icons.analytics_rounded,
-                'التحليل',
-                false,
-              ),
-              _navItem(
-                Icons.settings_rounded,
-                'الإعدادات',
-                false,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _navItem(
-    IconData icon,
-    String label,
-    bool selected,
-  ) {
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          if (selected) {
-            return;
-          }
-
-          _showMessage(
-            '$label - سيتم ربط الشاشة لاحقًا',
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center
+          _sectionTitle(
+            'بيانات 
