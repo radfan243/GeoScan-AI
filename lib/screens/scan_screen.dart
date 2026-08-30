@@ -26,6 +26,7 @@ class _ScanScreenState extends State<ScanScreen>
   final List<double> signalHistory = <double>[];
   final List<Map<String, dynamic>> savedReadings =
       <Map<String, dynamic>>[];
+  Map<String, double> materialScores = <String, double>{};
 
   double signal = 0;
   double rawSignal = 0;
@@ -176,6 +177,19 @@ class _ScanScreenState extends State<ScanScreen>
       depth,
     );
 
+    final Map<String, double> incomingMaterials = <String, double>{};
+
+    final dynamic materialsRaw = data['materials'];
+
+    if (materialsRaw is Map) {
+      materialsRaw.forEach((dynamic key, dynamic value) {
+        if (value is num) {
+          incomingMaterials[key.toString()] =
+              value.toDouble().clamp(0.0, 100.0);
+        }
+      });
+    }
+
     final double safeSignal =
         incomingSignal.clamp(0.0, 100.0).toDouble();
 
@@ -224,6 +238,10 @@ class _ScanScreenState extends State<ScanScreen>
       baseline = incomingBaseline;
       stability = safeStability;
       depth = safeDepth;
+
+      if (incomingMaterials.isNotEmpty) {
+        materialScores = incomingMaterials;
+      }
 
       if (status.isNotEmpty) {
         deviceStatus = status;
@@ -1445,20 +1463,11 @@ class _ScanScreenState extends State<ScanScreen>
   int _targetScore(String target) {
     if (!connected || signal <= 0) return 0;
 
-    switch (target) {
-      case 'ذهب':
-        return signal.round().clamp(0, 100);
-      case 'نحاس':
-        return (signal * .62).round().clamp(0, 100);
-      case 'فضة':
-        return (signal * .36).round().clamp(0, 100);
-      case 'حديد':
-        return (signal * .23).round().clamp(0, 100);
-      case 'ماء':
-        return (signal * .76).round().clamp(0, 100);
-      default:
-        return 0;
+    if (materialScores.containsKey(target)) {
+      return materialScores[target]!.round().clamp(0, 100);
     }
+
+    return 0;
   }
 
   Widget _targetRow(
@@ -1883,12 +1892,4 @@ class _ScanScreenState extends State<ScanScreen>
                         Expanded(
                           child: saveButton,
                         ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: resetButton,
-                        ),
-                      ],
-                    ),
-                  ],
-                );
-  
+            
