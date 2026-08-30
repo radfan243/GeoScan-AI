@@ -49,10 +49,9 @@ class _ScanScreenState extends State<ScanScreen>
 
   final List<String> targets = <String>[
     'ذهب',
-    'معدن',
-    'فضة',
     'نحاس',
-    'ألماس',
+    'فضة',
+    'حديد',
     'ماء',
   ];
 
@@ -63,7 +62,7 @@ class _ScanScreenState extends State<ScanScreen>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
+    )..repeat();
 
     connected = _bluetooth.isConnected;
     deviceStatus = connected ? 'متصل' : 'غير متصل';
@@ -214,7 +213,7 @@ class _ScanScreenState extends State<ScanScreen>
     final double displayedSignal =
         signal == 0
             ? safeSignal
-            : signal * 0.70 + safeSignal * 0.30;
+            : signal * .70 + safeSignal * .30;
 
     final double finalSignal =
         displayedSignal.clamp(0.0, 100.0).toDouble();
@@ -229,8 +228,7 @@ class _ScanScreenState extends State<ScanScreen>
       if (status.isNotEmpty) {
         deviceStatus = status;
       } else {
-        deviceStatus =
-            incomingScanning ? 'يمسح' : 'متصل';
+        deviceStatus = incomingScanning ? 'يمسح' : 'متصل';
       }
 
       if (target.isNotEmpty) {
@@ -295,9 +293,7 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   bool get hasRecentData {
-    if (lastDataTime == null) {
-      return false;
-    }
+    if (lastDataTime == null) return false;
 
     return DateTime.now()
             .difference(lastDataTime!)
@@ -605,61 +601,79 @@ class _ScanScreenState extends State<ScanScreen>
   void _openQuickMenu() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF08111F),
+      backgroundColor: const Color(0xFF07111E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
-          top: Radius.circular(24),
+          top: Radius.circular(26),
         ),
       ),
       builder: (BuildContext context) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'GeoScan AI',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 15),
-                ListTile(
-                  leading: const Icon(
-                    Icons.sync_rounded,
-                    color: Colors.cyanAccent,
-                  ),
-                  title: const Text(
-                    'معايرة الجهاز',
-                    style: TextStyle(
-                      color: Colors.white,
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                18,
+                18,
+                18,
+                24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 45,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius:
+                          BorderRadius.circular(10),
                     ),
                   ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    calibrate();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.refresh_rounded,
-                    color: Colors.amberAccent,
-                  ),
-                  title: const Text(
-                    'تصفير العرض',
+                  const SizedBox(height: 18),
+                  const Text(
+                    'GeoScan AI',
                     style: TextStyle(
                       color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    resetDisplay();
-                  },
-                ),
-              ],
+                  const SizedBox(height: 15),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.sync_rounded,
+                      color: Colors.cyanAccent,
+                    ),
+                    title: const Text(
+                      'معايرة الجهاز',
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      calibrate();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.refresh_rounded,
+                      color: Colors.amberAccent,
+                    ),
+                    title: const Text(
+                      'تصفير العرض',
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      resetDisplay();
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -677,47 +691,123 @@ class _ScanScreenState extends State<ScanScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050A14),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF050A14),
-        elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'GeoScan AI',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF030912),
+        appBar: _buildAppBar(),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(
+              14,
+              8,
+              14,
+              20,
+            ),
+            child: Column(
+              children: [
+                _buildHeroScanner(),
+                const SizedBox(height: 12),
+                _buildSignalLevel(),
+                const SizedBox(height: 12),
+                _buildMainContent(),
+                const SizedBox(height: 12),
+                _buildStatusCards(),
+                const SizedBox(height: 12),
+                _buildControls(),
+                const SizedBox(height: 12),
+                _buildSettings(),
+                const SizedBox(height: 12),
+                _buildTechnicalData(),
+                const SizedBox(height: 12),
+                _buildNotice(),
+              ],
+            ),
           ),
         ),
-        leading: IconButton(
-          onPressed: _openQuickMenu,
-          icon: const Icon(
-            Icons.tune_rounded,
-            color: Colors.cyanAccent,
-          ),
+        bottomNavigationBar: _buildBottomNavigation(),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: const Color(0xFF030912),
+      elevation: 0,
+      centerTitle: true,
+      toolbarHeight: 82,
+      leading: IconButton(
+        onPressed: _openQuickMenu,
+        icon: const Icon(
+          Icons.menu_rounded,
+          color: Colors.white,
+          size: 34,
         ),
-        actions: [
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(right: 12),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 5,
-              ),
-              decoration: BoxDecoration(
-                color: connected
-                    ? Colors.greenAccent.withOpacity(.10)
-                    : Colors.redAccent.withOpacity(.10),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: connected
-                      ? Colors.greenAccent.withOpacity(.35)
-                      : Colors.redAccent.withOpacity(.35),
+      ),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RichText(
+            text: const TextSpan(
+              children: [
+                TextSpan(
+                  text: 'Geo',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
+                TextSpan(
+                  text: 'Scan',
+                  style: TextStyle(
+                    color: Color(0xFF8BD7FF),
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                TextSpan(
+                  text: ' AI',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            'المسح المباشر',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(
+            left: 4,
+            right: 4,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                connected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_disabled,
+                color: connected
+                    ? Colors.cyanAccent
+                    : Colors.redAccent,
+                size: 27,
               ),
-              child: Text(
-                connected ? 'BLE' : 'OFF',
+              Text(
+                connected ? 'متصل' : 'غير متصل',
                 style: TextStyle(
                   color: connected
                       ? Colors.greenAccent
@@ -726,226 +816,334 @@ class _ScanScreenState extends State<ScanScreen>
                   fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(
-            12,
-            8,
-            12,
-            18,
-          ),
-          child: Column(
-            children: [
-              _buildScanner(),
-              const SizedBox(height: 12),
-              _buildMetrics(),
-              const SizedBox(height: 12),
-              _buildSignalLevel(),
-              const SizedBox(height: 12),
-              _buildSignalGraph(),
-              const SizedBox(height: 12),
-              _buildTargetAnalysis(),
-              const SizedBox(height: 12),
-              _buildStatusCards(),
-              const SizedBox(height: 12),
-              _buildSettings(),
-              const SizedBox(height: 12),
-              _buildControls(),
-              const SizedBox(height: 12),
-              _buildTechnicalData(),
-              const SizedBox(height: 12),
-              _buildNotice(),
             ],
           ),
         ),
-      ),
-      bottomNavigationBar: _buildBottomNavigation(),
-    );
-  }
-
-  Widget _buildScanner() {
-    return _card(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'المسح المباشر',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    signalStatus,
-                    style: TextStyle(
-                      color: signalColor,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-              Icon(
-                connected
-                    ? Icons.bluetooth_connected
-                    : Icons.bluetooth_disabled,
-                color: connected
-                    ? Colors.greenAccent
-                    : Colors.redAccent,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 330,
-            width: double.infinity,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                AnimatedBuilder(
-                  animation: _pulseController,
-                  builder: (
-                    BuildContext context,
-                    Widget? child,
-                  ) {
-                    return CustomPaint(
-                      size: const Size(320, 320),
-                      painter: GeoScannerPainter(
-                        signal: signal,
-                        scanning: scanning,
-                        pulse: _pulseController.value,
-                        color: signalColor,
-                      ),
-                    );
-                  },
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      scanning ? 'LIVE SCAN' : 'READY',
-                      style: TextStyle(
-                        color: signalColor,
-                        fontSize: 12,
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      signal.toStringAsFixed(0),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 62,
-                        height: .9,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      '% SIGNAL',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 10,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      targetType,
-                      style: TextStyle(
-                        color: signalColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetrics() {
-    return Row(
-      children: [
-        Expanded(
-          child: _smallMetric(
-            title: 'شدة الإشارة',
-            value: '${signal.toStringAsFixed(0)}%',
-            icon: Icons.signal_cellular_alt,
-            color: signalColor,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _smallMetric(
-            title: 'العمق التقريبي',
-            value: depthText,
-            icon: Icons.height_rounded,
-            color: Colors.cyanAccent,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _smallMetric(
-            title: 'استقرار الإشارة',
-            value: '${stability.toStringAsFixed(0)}%',
-            icon: Icons.speed_rounded,
-            color: Colors.greenAccent,
+        IconButton(
+          onPressed: _openQuickMenu,
+          icon: const Icon(
+            Icons.more_vert_rounded,
+            color: Colors.white,
+            size: 30,
           ),
         ),
       ],
     );
   }
 
-  Widget _smallMetric({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return _card(
-      height: 84,
-      padding: const EdgeInsets.symmetric(
-        horizontal: 5,
-        vertical: 8,
+  Widget _buildHeroScanner() {
+    return LayoutBuilder(
+      builder: (
+        BuildContext context,
+        BoxConstraints constraints,
+      ) {
+        final bool wide = constraints.maxWidth >= 700;
+
+        if (wide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _buildMetricCard(
+                  'شدة الإشارة',
+                  '${signal.toStringAsFixed(1)}%',
+                  signalStatus,
+                  Icons.signal_cellular_alt_rounded,
+                  signalColor,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: _buildGaugeCard(),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  children: [
+                    _buildMetricCard(
+                      'العمق التقريبي',
+                      depthText,
+                      depth > 0
+                          ? 'قراءة ESP32'
+                          : 'لا توجد قراءة',
+                      Icons.gps_fixed_rounded,
+                      Colors.greenAccent,
+                    ),
+                    const SizedBox(height: 10),
+                    _buildMetricCard(
+                      'استقرار الإشارة',
+                      '${stability.toStringAsFixed(0)}%',
+                      'استقرار القراءة',
+                      Icons.graphic_eq_rounded,
+                      Colors.greenAccent,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            _buildGaugeCard(),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildMetricCard(
+                    'شدة الإشارة',
+                    '${signal.toStringAsFixed(1)}%',
+                    signalStatus,
+                    Icons.signal_cellular_alt_rounded,
+                    signalColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildMetricCard(
+                    'العمق التقريبي',
+                    depthText,
+                    depth > 0
+                        ? 'قراءة ESP32'
+                        : 'لا توجد قراءة',
+                    Icons.gps_fixed_rounded,
+                    Colors.greenAccent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildMetricCard(
+                    'الاستقرار',
+                    '${stability.toStringAsFixed(0)}%',
+                    'الإشارة',
+                    Icons.graphic_eq_rounded,
+                    Colors.greenAccent,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildGaugeCard() {
+    return _panel(
+      padding: const EdgeInsets.fromLTRB(
+        10,
+        12,
+        10,
+        8,
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: color, size: 21),
+          Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    scanning
+                        ? Icons.radar_rounded
+                        : Icons.radar_outlined,
+                    color: signalColor,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    scanning ? 'LIVE SCAN' : 'READY',
+                    style: TextStyle(
+                      color: signalColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+              _liveBadge(),
+            ],
+          ),
           const SizedBox(height: 4),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 8,
+          SizedBox(
+            height: 285,
+            width: double.infinity,
+            child: LayoutBuilder(
+              builder: (
+                BuildContext context,
+                BoxConstraints constraints,
+              ) {
+                final double size =
+                    math.min(
+                      constraints.maxWidth,
+                      330,
+                    );
+
+                return Center(
+                  child: SizedBox(
+                    width: size,
+                    height: size,
+                    child: AnimatedBuilder(
+                      animation: _pulseController,
+                      builder: (
+                        BuildContext context,
+                        Widget? child,
+                      ) {
+                        return CustomPaint(
+                          painter: GeoGaugePainter(
+                            signal: signal,
+                            scanning: scanning,
+                            pulse:
+                                _pulseController.value,
+                          ),
+                          child: Center(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.only(
+                                top: 50,
+                              ),
+                              child: Column(
+                                mainAxisSize:
+                                    MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    'LIVE SCAN',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 21,
+                                      fontWeight:
+                                          FontWeight.w800,
+                                      letterSpacing: 1,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${signal.toStringAsFixed(1)}%',
+                                    style: TextStyle(
+                                      color: signalColor,
+                                      fontSize: 52,
+                                      height: .95,
+                                      fontWeight:
+                                          FontWeight.w900,
+                                      shadows: [
+                                        Shadow(
+                                          color: signalColor
+                                              .withOpacity(.35),
+                                          blurRadius: 18,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    signalStatus,
+                                    style: TextStyle(
+                                      color: signalColor,
+                                      fontSize: 14,
+                                      fontWeight:
+                                          FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
             ),
           ),
-          const SizedBox(height: 2),
+        ],
+      ),
+    );
+  }
+
+  Widget _liveBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 9,
+        vertical: 5,
+      ),
+      decoration: BoxDecoration(
+        color: connected
+            ? Colors.greenAccent.withOpacity(.08)
+            : Colors.redAccent.withOpacity(.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: connected
+              ? Colors.greenAccent.withOpacity(.35)
+              : Colors.redAccent.withOpacity(.35),
+        ),
+      ),
+      child: Text(
+        connected ? 'متصل' : 'OFF',
+        style: TextStyle(
+          color: connected
+              ? Colors.greenAccent
+              : Colors.redAccent,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetricCard(
+    String title,
+    String value,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
+    return _panel(
+      padding: const EdgeInsets.all(13),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Text(
             value,
             style: TextStyle(
               color: color,
-              fontSize: 13,
+              fontSize: 28,
               fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: color.withOpacity(.8),
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
@@ -954,43 +1152,134 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   Widget _buildSignalLevel() {
-    return _card(
+    return _panel(
       child: Column(
         children: [
-          _header(
+          _sectionTitle(
             'مستوى الإشارة',
             Icons.bar_chart_rounded,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 11),
+          Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
+            children: const [
+              Text(
+                '0',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                '20',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                '40',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                '60',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                '80',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+              Text(
+                '100',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
           SizedBox(
-            height: 32,
+            height: 28,
             child: Row(
               children: List.generate(
                 40,
                 (int index) {
                   final double level =
                       ((index + 1) / 40) * 100;
-                  final bool active = signal >= level;
+                  final bool active =
+                      signal >= level;
 
                   return Expanded(
                     child: AnimatedContainer(
                       duration: const Duration(
-                        milliseconds: 120,
+                        milliseconds: 130,
                       ),
-                      margin: const EdgeInsets.symmetric(
+                      margin:
+                          const EdgeInsets.symmetric(
                         horizontal: 1,
                       ),
                       decoration: BoxDecoration(
                         color: active
                             ? _meterColor(index)
-                            : Colors.white.withOpacity(.06),
-                        borderRadius: BorderRadius.circular(4),
+                            : Colors.white
+                                .withOpacity(.055),
+                        borderRadius:
+                            BorderRadius.circular(4),
                       ),
                     ),
                   );
                 },
               ),
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'ضعيفة',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  'متوسطة',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  'قوية',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1004,17 +1293,62 @@ class _ScanScreenState extends State<ScanScreen>
     return Colors.greenAccent;
   }
 
+  Widget _buildMainContent() {
+    return LayoutBuilder(
+      builder: (
+        BuildContext context,
+        BoxConstraints constraints,
+      ) {
+        final bool wide = constraints.maxWidth >= 700;
+
+        if (wide) {
+          return Row(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  children: [
+                    _buildSignalGraph(),
+                    const SizedBox(height: 12),
+                    _buildPotentialTarget(),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: _buildTargetAnalysis(),
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            _buildSignalGraph(),
+            const SizedBox(height: 12),
+            _buildTargetAnalysis(),
+            const SizedBox(height: 12),
+            _buildPotentialTarget(),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildSignalGraph() {
-    return _card(
+    return _panel(
       child: Column(
         children: [
-          _header(
+          _sectionTitle(
             'حركة الإشارة',
             Icons.show_chart_rounded,
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 150,
+            height: 175,
             width: double.infinity,
             child: CustomPaint(
               painter: SignalGraphPainter(
@@ -1029,93 +1363,284 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   Widget _buildTargetAnalysis() {
-    return _card(
+    return _panel(
       child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.stretch,
         children: [
-          _header(
-            'تحليل الهدف',
-            Icons.radar_rounded,
-          ),
-          const SizedBox(height: 12),
           Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
             children: [
+              _sectionTitle(
+                'تحليل الهدف',
+                Icons.radar_rounded,
+              ),
               Container(
-                width: 52,
-                height: 52,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: signalColor.withOpacity(.10),
                   border: Border.all(
-                    color: signalColor.withOpacity(.35),
+                    color: Colors.white38,
                   ),
                 ),
-                child: Icon(
-                  _targetIcon(targetType),
-                  color: signalColor,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      targetType,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                child: const Center(
+                  child: Text(
+                    '?',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      targetAnalysis,
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: targets.map(
-              (String target) {
-                final bool selected =
-                    targetType == target;
+          const SizedBox(height: 10),
+          _targetRow(
+            'ذهب',
+            _targetScore('ذهب'),
+            Icons.diamond,
+            Colors.greenAccent,
+          ),
+          _targetRow(
+            'نحاس',
+            _targetScore('نحاس'),
+            Icons.bolt,
+            Colors.orangeAccent,
+          ),
+          _targetRow(
+            'فضة',
+            _targetScore('فضة'),
+            Icons.circle_outlined,
+            Colors.lightBlueAccent,
+          ),
+          _targetRow(
+            'حديد',
+            _targetScore('حديد'),
+            Icons.hardware_rounded,
+            Colors.redAccent,
+          ),
+          _targetRow(
+            'ماء',
+            _targetScore('ماء'),
+            Icons.water_drop_rounded,
+            Colors.cyanAccent,
+          ),
+          const SizedBox(height: 7),
+          Text(
+            'النسب تقديرية لعرض الإشارة وليست تعريفًا علميًا للمادة.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 9,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-                return ChoiceChip(
-                  label: Text(target),
-                  selected: selected,
-                  onSelected: (_) {
-                    selectTarget(target);
-                  },
-                  labelStyle: TextStyle(
-                    color: selected
-                        ? Colors.black
-                        : Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+  int _targetScore(String target) {
+    if (!connected || signal <= 0) return 0;
+
+    switch (target) {
+      case 'ذهب':
+        return signal.round().clamp(0, 100);
+      case 'نحاس':
+        return (signal * .62).round().clamp(0, 100);
+      case 'فضة':
+        return (signal * .36).round().clamp(0, 100);
+      case 'حديد':
+        return (signal * .23).round().clamp(0, 100);
+      case 'ماء':
+        return (signal * .76).round().clamp(0, 100);
+      default:
+        return 0;
+    }
+  }
+
+  Widget _targetRow(
+    String name,
+    int percentage,
+    IconData icon,
+    Color color,
+  ) {
+    final bool selected = targetType == name;
+
+    return GestureDetector(
+      onTap: () => selectTarget(name),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 7),
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: selected
+              ? color.withOpacity(.07)
+              : const Color(0xFF07111D),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? color.withOpacity(.55)
+                : Colors.white.withOpacity(.08),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color.withOpacity(.09),
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '$percentage%',
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
                   ),
-                  selectedColor: signalColor,
-                  backgroundColor:
-                      const Color(0xFF101A2A),
-                  side: BorderSide(
-                    color: selected
-                        ? signalColor
-                        : Colors.white12,
+                  const SizedBox(height: 7),
+                  ClipRRect(
+                    borderRadius:
+                        BorderRadius.circular(20),
+                    child: LinearProgressIndicator(
+                      value: percentage / 100,
+                      minHeight: 7,
+                      backgroundColor:
+                          Colors.white.withOpacity(.07),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(
+                        color,
+                      ),
+                    ),
                   ),
-                );
-              },
-            ).toList(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPotentialTarget() {
+    final String displayTarget =
+        targetType == 'غير محدد'
+            ? 'غير محدد'
+            : targetType;
+
+    final int score =
+        _targetScore(displayTarget);
+
+    final Color color =
+        displayTarget == 'ذهب'
+            ? Colors.amberAccent
+            : signalColor;
+
+    return _panel(
+      child: Column(
+        children: [
+          _sectionTitle(
+            'نوع الهدف المحتمل',
+            Icons.search_rounded,
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(.14),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: color.withOpacity(.22),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 86,
+                  height: 86,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color.withOpacity(.07),
+                    border: Border.all(
+                      color: color.withOpacity(.25),
+                    ),
+                  ),
+                  child: Icon(
+                    _targetIcon(displayTarget),
+                    color: color,
+                    size: 44,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayTarget == 'غير محدد'
+                            ? 'لا يوجد هدف محدد'
+                            : '$displayTarget محتمل',
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$score%',
+                        style: TextStyle(
+                          color: signalColor,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'يرجى تأكيد النتيجة بالحفر والاختبار الميداني.',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1132,72 +1657,90 @@ class _ScanScreenState extends State<ScanScreen>
         return Icons.bolt;
       case 'ماء':
         return Icons.water_drop;
-      case 'ألماس':
-        return Icons.diamond_outlined;
-      case 'معدن':
-        return Icons.hardware;
+      case 'حديد':
+        return Icons.hardware_rounded;
       default:
-        return Icons.search;
+        return Icons.search_rounded;
     }
   }
 
   Widget _buildStatusCards() {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _statusCard(
-                title: 'حالة الجهاز',
-                value:
-                    connected ? 'متصل' : 'غير متصل',
-                icon: Icons.memory_rounded,
-                color: connected
-                    ? Colors.greenAccent
-                    : Colors.redAccent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _statusCard(
-                title: 'حالة المسح',
-                value:
-                    scanning ? 'مباشر' : 'متوقف',
-                icon: Icons.radar,
-                color: scanning
-                    ? Colors.cyanAccent
-                    : Colors.white54,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _statusCard(
-                title: 'آخر حزمة',
-                value:
-                    lastSequence?.toString() ?? '--',
-                icon: Icons.numbers,
-                color: Colors.amberAccent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _statusCard(
-                title: 'البيانات',
-                value:
-                    hasRecentData ? 'LIVE' : '--',
-                icon: Icons.data_usage,
-                color: hasRecentData
-                    ? Colors.greenAccent
-                    : Colors.white54,
-              ),
-            ),
-          ],
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (
+        BuildContext context,
+        BoxConstraints constraints,
+      ) {
+        final bool wide = constraints.maxWidth >= 700;
+
+        final List<Widget> cards = [
+          _statusCard(
+            title: 'حالة الجهاز',
+            value: connected ? 'مستقر' : 'غير متصل',
+            icon: Icons.memory_rounded,
+            color: connected
+                ? Colors.greenAccent
+                : Colors.redAccent,
+          ),
+          _statusCard(
+            title: 'الحساسية',
+            value:
+                '${sensitivity.toStringAsFixed(0)}%',
+            icon: Icons.gps_fixed_rounded,
+            color: Colors.greenAccent,
+          ),
+          _statusCard(
+            title: 'الفلترة',
+            value: filter,
+            icon: Icons.filter_alt_rounded,
+            color: Colors.cyanAccent,
+          ),
+          _statusCard(
+            title: 'التنبيه الصوتي',
+            value: audioEnabled ? 'يعمل' : 'متوقف',
+            icon: Icons.volume_up_rounded,
+            color: Colors.greenAccent,
+          ),
+          _statusCard(
+            title: 'الاهتزاز',
+            value:
+                vibrationEnabled ? 'يعمل' : 'متوقف',
+            icon: Icons.vibration_rounded,
+            color: Colors.cyanAccent,
+          ),
+        ];
+
+        if (wide) {
+          return Row(
+            children: cards
+                .map(
+                  (Widget card) => Expanded(
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.symmetric(
+                        horizontal: 4,
+                      ),
+                      child: card,
+                    ),
+                  ),
+                )
+                .toList(),
+          );
+        }
+
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: cards
+              .map(
+                (Widget card) => SizedBox(
+                  width:
+                      (constraints.maxWidth - 8) / 2,
+                  child: card,
+                ),
+              )
+              .toList(),
+        );
+      },
     );
   }
 
@@ -1207,24 +1750,41 @@ class _ScanScreenState extends State<ScanScreen>
     required IconData icon,
     required Color color,
   }) {
-    return _card(
-      height: 88,
+    return _panel(
       padding: const EdgeInsets.all(10),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 25),
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withOpacity(.07),
+              border: Border.all(
+                color: color.withOpacity(.25),
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 23,
+            ),
+          ),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
-              mainAxisAlignment:
-                  MainAxisAlignment.center,
               crossAxisAlignment:
                   CrossAxisAlignment.start,
+              mainAxisAlignment:
+                  MainAxisAlignment.center,
               children: [
                 Text(
                   title,
+                  maxLines: 1,
+                  overflow:
+                      TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: Colors.white54,
+                    color: Colors.white60,
                     fontSize: 9,
                   ),
                 ),
@@ -1232,11 +1792,12 @@ class _ScanScreenState extends State<ScanScreen>
                 Text(
                   value,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow:
+                      TextOverflow.ellipsis,
                   style: TextStyle(
                     color: color,
                     fontSize: 13,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
               ],
@@ -1244,733 +1805,90 @@ class _ScanScreenState extends State<ScanScreen>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildSettings() {
-    return _card(
-      child: Column(
-        children: [
-          _header(
-            'إعدادات الجهاز',
-            Icons.tune_rounded,
-          ),
-          const SizedBox(height: 8),
-          _settingTile(
-            icon: Icons.sensors_rounded,
-            title: 'الحساسية',
-            trailing: Text(
-              '${sensitivity.toStringAsFixed(0)}%',
-              style: const TextStyle(
-                color: Colors.cyanAccent,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          Slider(
-            value: sensitivity,
-            min: 0,
-            max: 100,
-            divisions: 100,
-            activeColor: Colors.cyanAccent,
-            inactiveColor: Colors.white12,
-            onChanged:
-                connected && !calibrating
-                    ? changeSensitivity
-                    : null,
-          ),
-          const Divider(
-            color: Colors.white10,
-            height: 10,
-          ),
-          _settingTile(
-            icon: Icons.filter_alt_rounded,
-            title: 'الفلترة',
-            trailing: DropdownButton<String>(
-              value: filter,
-              dropdownColor: const Color(0xFF101A2A),
-              underline: const SizedBox(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-              ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'منخفضة',
-                  child: Text('منخفضة'),
-                ),
-                DropdownMenuItem(
-                  value: 'متوسطة',
-                  child: Text('متوسطة'),
-                ),
-                DropdownMenuItem(
-                  value: 'عالية',
-                  child: Text('عالية'),
-                ),
-              ],
-              onChanged: connected
-                  ? (String? value) {
-                      if (value != null) {
-                        changeFilter(value);
-                      }
-                    }
-                  : null,
-            ),
-          ),
-          const Divider(
-            color: Colors.white10,
-            height: 20,
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            secondary: const Icon(
-              Icons.volume_up_rounded,
-              color: Colors.amberAccent,
-            ),
-            title: const Text(
-              'التنبيه الصوتي',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-              ),
-            ),
-            value: audioEnabled,
-            activeColor: Colors.amberAccent,
-            onChanged:
-                connected ? toggleAudio : null,
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            secondary: const Icon(
-              Icons.vibration_rounded,
-              color: Colors.purpleAccent,
-            ),
-            title: const Text(
-              'الاهتزاز',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-              ),
-            ),
-            value: vibrationEnabled,
-            activeColor: Colors.purpleAccent,
-            onChanged:
-                connected ? toggleVibration : null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingTile({
-    required IconData icon,
-    required String title,
-    required Widget trailing,
-  }) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          color: Colors.white54,
-          size: 20,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-            ),
-          ),
-        ),
-        trailing,
-      ],
     );
   }
 
   Widget _buildControls() {
-    return _card(
+    return _panel(
       child: Column(
         children: [
-          _header(
+          _sectionTitle(
             'التحكم بالمسح',
-            Icons.play_circle_outline,
+            Icons.tune_rounded,
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child: FilledButton.icon(
-                    onPressed:
-                        scanning ? null : startScan,
-                    icon: const Icon(
-                      Icons.play_arrow_rounded,
+          LayoutBuilder(
+            builder: (
+              BuildContext context,
+              BoxConstraints constraints,
+            ) {
+              final bool wide =
+                  constraints.maxWidth >= 600;
+
+              final Widget startButton =
+                  _actionButton(
+                label: 'بدء المسح',
+                icon: Icons.play_arrow_rounded,
+                color: Colors.greenAccent,
+                enabled: !scanning,
+                onPressed: startScan,
+              );
+
+              final Widget stopButton =
+                  _actionButton(
+                label: 'إيقاف المسح',
+                icon: Icons.stop_rounded,
+                color: Colors.redAccent,
+                enabled: scanning,
+                onPressed: stopScan,
+              );
+
+              final Widget saveButton =
+                  _actionButton(
+                label: 'حفظ القراءة',
+                icon: Icons.save_rounded,
+                color: Colors.blueAccent,
+                enabled: connected,
+                onPressed: saveReading,
+                filled: false,
+              );
+
+              final Widget resetButton =
+                  _actionButton(
+                label: 'تصفير',
+                icon: Icons.refresh_rounded,
+                color: Colors.white70,
+                enabled: true,
+                onPressed: resetDisplay,
+                filled: false,
+              );
+
+              if (wide) {
+                return Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: startButton,
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: stopButton,
+                        ),
+                      ],
                     ),
-                    label: const Text('بدء المسح'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      disabledBackgroundColor:
-                          Colors.white10,
-                      foregroundColor: Colors.white,
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(14),
-                      ),
+                    const SizedBox(height: 9),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: saveButton,
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: resetButton,
+                        ),
+                      ],
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child: FilledButton.icon(
-                    onPressed:
-                        scanning ? stopScan : null,
-                    icon: const Icon(
-                      Icons.stop_rounded,
-                    ),
-                    label: const Text('إيقاف'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor:
-                          Colors.redAccent,
-                      disabledBackgroundColor:
-                          Colors.white10,
-                      foregroundColor: Colors.white,
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed:
-                      connected ? saveReading : null,
-                  icon: const Icon(
-                    Icons.save_rounded,
-                  ),
-                  label: const Text('حفظ القراءة'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                        Colors.cyanAccent,
-                    side: const BorderSide(
-                      color: Colors.cyanAccent,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: resetDisplay,
-                  icon: const Icon(
-                    Icons.refresh_rounded,
-                  ),
-                  label: const Text('تصفير'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(
-                      color: Colors.white24,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTechnicalData() {
-    return _card(
-      child: Column(
-        children: [
-          _header(
-            'البيانات التقنية',
-            Icons.memory_rounded,
-          ),
-          const SizedBox(height: 10),
-          _technicalRow(
-            'Raw Signal',
-            rawSignal.toStringAsFixed(2),
-          ),
-          _technicalRow(
-            'Baseline',
-            baseline.toStringAsFixed(2),
-          ),
-          _technicalRow(
-            'Stability',
-            '${stability.toStringAsFixed(1)}%',
-          ),
-          _technicalRow(
-            'Depth',
-            depthText,
-          ),
-          _technicalRow(
-            'Sensitivity',
-            sensitivity.toStringAsFixed(0),
-          ),
-          _technicalRow(
-            'Filter',
-            filter,
-          ),
-          _technicalRow(
-            'Target',
-            targetType,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _technicalRow(
-    String title,
-    String value,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: 6,
-      ),
-      child: Row(
-        mainAxisAlignment:
-            MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 10,
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotice() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.amberAccent.withOpacity(.06),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: Colors.amberAccent.withOpacity(.18),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.info_outline_rounded,
-            color: Colors.amberAccent,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              'القراءة المعروضة تعتمد على البيانات الحقيقية القادمة من ESP32 عبر Bluetooth. تحديد نوع الهدف والعمق يحتاج إلى معايرة واختبارات ميدانية.',
-              style: TextStyle(
-                color: Colors.white60,
-                fontSize: 10,
-                height: 1.5,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomNavigation() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF07101D),
-        border: Border(
-          top: BorderSide(
-            color: Colors.white10,
-          ),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 68,
-          child: Row(
-            children: [
-              _navItem(
-                Icons.home_rounded,
-                'الرئيسية',
-                false,
-              ),
-              _navItem(
-                Icons.history_rounded,
-                'السجلات',
-                false,
-              ),
-              _navItem(
-                Icons.radar_rounded,
-                'المسح',
-                true,
-              ),
-              _navItem(
-                Icons.analytics_rounded,
-                'التحليل',
-                false,
-              ),
-              _navItem(
-                Icons.settings_rounded,
-                'الإعدادات',
-                false,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _navItem(
-    IconData icon,
-    String label,
-    bool selected,
-  ) {
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          if (selected) return;
-
-          _showMessage(
-            '$label - سيتم ربط الشاشة لاحقًا',
-          );
-        },
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 22,
-              color: selected
-                  ? Colors.cyanAccent
-                  : Colors.white54,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected
-                    ? Colors.cyanAccent
-                    : Colors.white54,
-                fontSize: 9,
-                fontWeight: selected
-                    ? FontWeight.bold
-                    : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _header(
-    String title,
-    IconData icon,
-  ) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          color: Colors.cyanAccent,
-          size: 20,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _card({
-    required Widget child,
-    EdgeInsetsGeometry padding =
-        const EdgeInsets.all(14),
-    double? height,
-  }) {
-    return Container(
-      width: double.infinity,
-      height: height,
-      padding: padding,
-      decoration: BoxDecoration(
-        color: const Color(0xFF0A1422),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Colors.white.withOpacity(.07),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(.18),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
-}
-
-class GeoScannerPainter extends CustomPainter {
-  final double signal;
-  final bool scanning;
-  final double pulse;
-  final Color color;
-
-  GeoScannerPainter({
-    required this.signal,
-    required this.scanning,
-    required this.pulse,
-    required this.color,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Offset center = size.center(Offset.zero);
-    final double radius =
-        math.min(size.width, size.height) * .40;
-
-    final Paint background = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = Colors.white.withOpacity(.08);
-
-    for (int i = 1; i <= 5; i++) {
-      canvas.drawCircle(
-        center,
-        radius * i / 5,
-        background,
-      );
-    }
-
-    final Paint cross = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = Colors.white.withOpacity(.05);
-
-    canvas.drawLine(
-      Offset(center.dx - radius, center.dy),
-      Offset(center.dx + radius, center.dy),
-      cross,
-    );
-
-    canvas.drawLine(
-      Offset(center.dx, center.dy - radius),
-      Offset(center.dx, center.dy + radius),
-      cross,
-    );
-
-    final double activeRadius =
-        radius * (.35 + (signal / 100) * .65);
-
-    final Paint active = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 7
-      ..strokeCap = StrokeCap.round
-      ..color = color.withOpacity(.85);
-
-    canvas.drawArc(
-      Rect.fromCircle(
-        center: center,
-        radius: activeRadius,
-      ),
-      -math.pi / 2,
-      math.pi * 2 * signal / 100,
-      false,
-      active,
-    );
-
-    final double glowRadius =
-        radius * (.70 + pulse * .10);
-
-    final Paint glow = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = color.withOpacity(
-        scanning ? .22 : .08,
-      );
-
-    canvas.drawCircle(
-      center,
-      glowRadius,
-      glow,
-    );
-
-    if (scanning) {
-      final Paint sweep = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round
-        ..color = color.withOpacity(.75);
-
-      final double sweepAngle =
-          -math.pi / 2 + pulse * math.pi * 2;
-
-      canvas.drawLine(
-        center,
-        Offset(
-          center.dx +
-              math.cos(sweepAngle) * radius,
-          center.dy +
-              math.sin(sweepAngle) * radius,
-        ),
-        sweep,
-      );
-    }
-
-    final Paint dot = Paint()
-      ..style = PaintingStyle.fill
-      ..color = color;
-
-    canvas.drawCircle(
-      center,
-      4 + signal / 35,
-      dot,
-    );
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant GeoScannerPainter oldDelegate,
-  ) {
-    return oldDelegate.signal != signal ||
-        oldDelegate.scanning != scanning ||
-        oldDelegate.pulse != pulse ||
-        oldDelegate.color != color;
-  }
-}
-
-class SignalGraphPainter extends CustomPainter {
-  final List<double> values;
-  final Color lineColor;
-
-  SignalGraphPainter({
-    required this.values,
-    required this.lineColor,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint grid = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = Colors.white.withOpacity(.05);
-
-    for (int i = 1; i <= 4; i++) {
-      final double y =
-          size.height * i / 5;
-
-      canvas.drawLine(
-        Offset(0, y),
-        Offset(size.width, y),
-        grid,
-      );
-    }
-
-    if (values.length < 2) return;
-
-    final Paint line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = lineColor;
-
-    final Path path = Path();
-
-    for (int i = 0; i < values.length; i++) {
-      final double x =
-          i / (values.length - 1) * size.width;
-
-      final double normalized =
-          values[i].clamp(0.0, 100.0) / 100;
-
-      final double y =
-          size.height -
-              normalized * size.height;
-
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-
-    canvas.drawPath(path, line);
-
-    final double lastX = size.width;
-    final double lastNormalized =
-        values.last.clamp(0.0, 100.0) / 100;
-
-    final double lastY =
-        size.height -
-            lastNormalized * size.height;
-
-    final Paint point = Paint()
-      ..style = PaintingStyle.fill
-      ..color = lineColor;
-
-    canvas.drawCircle(
-      Offset(lastX, lastY),
-      4,
-      point,
-    );
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant SignalGraphPainter oldDelegate,
-  ) {
-    return oldDelegate.values != values ||
-        oldDelegate.lineColor != lineColor;
-  }
-}
+                  ],
+                );
+  
