@@ -6,1047 +6,420 @@
 #include <ArduinoJson.h>
 
 // ============================================================
-// GeoScan AI - ESP32
-// REAL SENSOR DATA PROTOCOL v2
-// ESP32 -> Flutter
+// GeoScan-AI ESP32 firmware
+// Real ADC sensor -> BLE -> Flutter
+// Flutter -> BLE commands -> ESP32
 // ============================================================
 
 #define DEVICE_NAME "GeoScan-AI"
 
-// -----------------------------
-// BLE UUIDs
-// -----------------------------
-#define SERVICE_UUID \
-  "12345678-1234-1234-1234-1234567890ab"
+#define SERVICE_UUID "12345678-1234-1234-1234-1234567890ab"
+#define NOTIFY_UUID  "12345678-1234-1234-1234-1234567890ac"
+#define WRITE_UUID   "12345678-1234-1234-1234-1234567890ad"
 
-#define NOTIFY_UUID \
-  "12345678-1234-1234-1234-1234567890ac"
-
-#define WRITE_UUID \
-  "12345678-1234-1234-1234-1234567890ad"
-
-// ============================================================
-// HARDWARE
-// ============================================================
-
+// Hardware
 #define SENSOR_PIN 34
 #define BUZZER_PIN 25
 #define VIBRATION_PIN 26
-
-// ============================================================
-// BLE
-// ============================================================
 
 BLECharacteristic* notifyCharacteristic = nullptr;
 BLECharacteristic* writeCharacteristic = nullptr;
 
 bool deviceConnected = false;
 bool scanning = false;
-
-// ============================================================
-// SETTINGS
-// ============================================================
-
 bool audioEnabled = true;
 bool vibrationEnabled = false;
 
 int sensitivity = 70;
-
-String selectedFilter = "ALL";
-
-// ============================================================
-// SENSOR
-// ============================================================
+String selectedFilter = "MEDIUM";
+String selectedTarget = "METAL";
 
 int rawValue = 0;
+float baseline = 0.0f;
+float filteredSignal = 0.0f;
+float stability = 100.0f;
+float previousSignal = 0.0f;
 
-float baseline = 0.0;
-float filteredSignal = 0.0;
-float stability = 100.0;
-
-// آخر قيمة إشارة للمقارنة
-float previousSignal = 0.0;
-
-// ============================================================
-// TIMING
-// ============================================================
-
+uint32_t sequenceNumber = 0;
 unsigned long lastSendTime = 0;
 unsigned long lastStatusTime = 0;
 
 const unsigned long SEND_INTERVAL = 120;
 const unsigned long STATUS_INTERVAL = 2000;
 
-// ============================================================
-// SEQUENCE
-// ============================================================
+// The project does NOT claim a fake physical depth sensor.
+// depthEstimate is an optional signal-based estimate and must be
+// field-calibrated with known targets before being treated as depth.
+float depthEstimate = 0.0f;
+float depthConfidence = 0.0f;
 
-// رقم متسلسل لكل قراءة حقيقية
-uint32_t sequenceNumber = 0;
-
-// ============================================================
-// BLE SERVER CALLBACKS
-// ============================================================
+void sendStatus();
+void sendSignalData(float signal);
+void handleCommand(String command);
+void calibrateSensor();
 
 class GeoScanServerCallbacks : public BLEServerCallbacks {
-
   void onConnect(BLEServer* server) override {
-
+    (void)server;
     deviceConnected = true;
-
-    Serial.println();
-    Serial.println("================================");
-    Serial.println("GeoScan AI: PHONE CONNECTED");
-    Serial.println("================================");
-
-    // إرسال الحالة فور الاتصال
-    delay(100);
-
+    Serial.println("GeoScan-AI: PHONE CONNECTED");
+    delay(50);
     sendStatus();
   }
 
   void onDisconnect(BLEServer* server) override {
-
+    (void)server;
     deviceConnected = false;
     scanning = false;
-
     noTone(BUZZER_PIN);
     digitalWrite(VIBRATION_PIN, LOW);
-
-    Serial.println();
-    Serial.println("GeoScan AI: PHONE DISCONNECTED");
-
-    delay(300);
-
+    Serial.println("GeoScan-AI: PHONE DISCONNECTED");
+    delay(200);
     BLEDevice::startAdvertising();
   }
 };
 
-// ============================================================
-// CALCULATE STABILITY
-// ============================================================
-
 float calculateStability(float currentSignal) {
-
-  float difference =
-      abs(currentSignal - previousSignal);
-
+  const float difference = fabsf(currentSignal - previousSignal);
   previousSignal = currentSignal;
-
-  // كلما قل التغير زاد الاستقرار
-  float calculated =
-      100.0 - (difference * 5.0);
-
-  calculated =
-      constrain(
-          calculated,
-          0.0,
-          100.0
-      );
-
-  // تنعيم الاستقرار
-  stability =
-      (stability * 0.85) +
-      (calculated * 0.15);
-
+  float calculated = 100.0f - (difference * 5.0f);
+  calculated = constrain(calculated, 0.0f, 100.0f);
+  stability = (stability * 0.85f) + (calculated * 0.15f);
   return stability;
 }
 
-// ============================================================
-// CALCULATE SIGNAL
-// ============================================================
-
 float calculateSignal(int raw) {
+  if (baseline <= 0.0f) return 0.0f;
 
-  // لا توجد قراءة حقيقية قبل المعايرة
-  if (baseline <= 0) {
-    return 0.0;
-  }
-
-  // الفرق الحقيقي عن خط الأساس
-  float difference =
-      abs((float)raw - baseline);
-
-  // ----------------------------------------------------------
-  // تحويل الفرق إلى نسبة
-  // ----------------------------------------------------------
-
-  float signal =
-      difference * 100.0 / 1000.0;
-
-  // الحساسية
-  signal =
-      signal * (sensitivity / 70.0);
-
-  signal =
-      constrain(
-          signal,
-          0.0,
-          100.0
-      );
-
-  // ----------------------------------------------------------
-  // فلترة
-  // ----------------------------------------------------------
+  const float difference = fabsf((float)raw - baseline);
+  float signal = difference * 100.0f / 1000.0f;
+  signal *= ((float)sensitivity / 70.0f);
+  signal = constrain(signal, 0.0f, 100.0f);
 
   if (selectedFilter == "LOW") {
-
-    filteredSignal =
-        (filteredSignal * 0.90) +
-        (signal * 0.10);
-
+    filteredSignal = (filteredSignal * 0.90f) + (signal * 0.10f);
   } else if (selectedFilter == "HIGH") {
-
-    filteredSignal =
-        (filteredSignal * 0.55) +
-        (signal * 0.45);
-
+    filteredSignal = (filteredSignal * 0.55f) + (signal * 0.45f);
   } else {
-
-    // MEDIUM / ALL
-    filteredSignal =
-        (filteredSignal * 0.75) +
-        (signal * 0.25);
+    filteredSignal = (filteredSignal * 0.75f) + (signal * 0.25f);
   }
 
-  filteredSignal =
-      constrain(
-          filteredSignal,
-          0.0,
-          100.0
-      );
-
+  filteredSignal = constrain(filteredSignal, 0.0f, 100.0f);
   return filteredSignal;
 }
 
-// ============================================================
-// SIGNAL STATUS
-// ============================================================
-
-const char* getSignalStatus(
-    float signal
-) {
-
-  if (signal < 10) {
-    return "STABLE";
+// Signal-based depth estimate only. It is deliberately marked as an
+// estimate; real underground depth requires calibration against the
+// actual coil, target, soil and electronics.
+void updateDepthEstimate(float signal) {
+  if (signal < 8.0f || baseline <= 0.0f) {
+    depthEstimate = 0.0f;
+    depthConfidence = 0.0f;
+    return;
   }
 
-  if (signal < 30) {
-    return "WEAK";
-  }
+  // Conservative normalized estimate. Do not present as measured depth.
+  const float normalized = constrain(signal / 100.0f, 0.0f, 1.0f);
+  depthEstimate = 0.10f + (1.0f - normalized) * 1.90f;
+  depthConfidence = constrain((stability * 0.6f) + (signal * 0.4f), 0.0f, 100.0f);
+}
 
-  if (signal < 60) {
-    return "MEDIUM";
-  }
-
-  if (signal < 80) {
-    return "STRONG";
-  }
-
+const char* getSignalStatus(float signal) {
+  if (signal < 10.0f) return "STABLE";
+  if (signal < 30.0f) return "WEAK";
+  if (signal < 60.0f) return "MEDIUM";
+  if (signal < 80.0f) return "STRONG";
   return "VERY_STRONG";
 }
 
-// ============================================================
-// SEND REAL SENSOR DATA
-// ============================================================
-
-void sendSignalData(
-    float signal
-) {
-
-  if (!deviceConnected ||
-      notifyCharacteristic == nullptr) {
-    return;
-  }
-
-  StaticJsonDocument<512> doc;
-
-  // نوع البيانات
-  doc["type"] = "signal";
-
-  // رقم القراءة
-  doc["sequence"] = sequenceNumber;
-
-  // القراءة الخام من ADC
-  doc["raw"] = rawValue;
-
-  // خط الأساس
-  doc["baseline"] = baseline;
-
-  // الإشارة المعالجة
-  doc["signal"] = signal;
-
-  // الاستقرار
-  doc["stability"] = stability;
-
-  // الوقت منذ تشغيل ESP32
-  doc["timestamp"] = millis();
-
-  // الحالة
-  doc["status"] =
-      getSignalStatus(signal);
-
-  // حالة المسح
-  doc["scanning"] = scanning;
-
-  // الحساسية
-  doc["sensitivity"] = sensitivity;
-
-  // الفلتر
-  doc["filter"] = selectedFilter;
-
-  // مصدر البيانات
-  doc["source"] = "ESP32_ADC";
+void notifyJson(JsonDocument& doc) {
+  if (!deviceConnected || notifyCharacteristic == nullptr) return;
 
   String output;
-
-  serializeJson(
-      doc,
-      output
-  );
-
-  notifyCharacteristic->setValue(
-      output.c_str()
-  );
-
+  serializeJson(doc, output);
+  notifyCharacteristic->setValue(output.c_str());
   notifyCharacteristic->notify();
-
-  // Serial Monitor
-  Serial.print("REAL DATA: ");
+  Serial.print("TX: ");
   Serial.println(output);
 }
 
-// ============================================================
-// SEND STATUS
-// ============================================================
+void sendSignalData(float signal) {
+  if (!deviceConnected || notifyCharacteristic == nullptr) return;
+
+  StaticJsonDocument<768> doc;
+  doc["type"] = "signal";
+  doc["sequence"] = sequenceNumber;
+  doc["raw"] = rawValue;
+  doc["baseline"] = baseline;
+  doc["signal"] = signal;
+  doc["stability"] = stability;
+  doc["depth"] = depthEstimate;
+  doc["depthConfidence"] = depthConfidence;
+  doc["depthMode"] = "ESTIMATE";
+  doc["timestamp"] = millis();
+  doc["status"] = getSignalStatus(signal);
+  doc["scanning"] = scanning;
+  doc["sensitivity"] = sensitivity;
+  doc["filter"] = selectedFilter;
+  doc["target"] = selectedTarget;
+  doc["source"] = "ESP32_ADC";
+  notifyJson(doc);
+}
 
 void sendStatus() {
+  if (!deviceConnected || notifyCharacteristic == nullptr) return;
 
-  if (!deviceConnected ||
-      notifyCharacteristic == nullptr) {
-    return;
-  }
-
-  StaticJsonDocument<512> doc;
-
+  StaticJsonDocument<768> doc;
   doc["type"] = "status";
-
-  doc["connected"] =
-      deviceConnected;
-
-  doc["scanning"] =
-      scanning;
-
-  doc["sensitivity"] =
-      sensitivity;
-
-  doc["filter"] =
-      selectedFilter;
-
-  doc["audio"] =
-      audioEnabled;
-
-  doc["vibration"] =
-      vibrationEnabled;
-
-  doc["baseline"] =
-      baseline;
-
-  doc["raw"] =
-      rawValue;
-
-  doc["signal"] =
-      filteredSignal;
-
-  doc["stability"] =
-      stability;
-
-  doc["sequence"] =
-      sequenceNumber;
-
-  doc["timestamp"] =
-      millis();
-
-  doc["source"] =
-      "ESP32_ADC";
-
-  String output;
-
-  serializeJson(
-      doc,
-      output
-  );
-
-  notifyCharacteristic->setValue(
-      output.c_str()
-  );
-
-  notifyCharacteristic->notify();
-
-  Serial.print("STATUS: ");
-  Serial.println(output);
+  doc["connected"] = deviceConnected;
+  doc["scanning"] = scanning;
+  doc["sensitivity"] = sensitivity;
+  doc["filter"] = selectedFilter;
+  doc["audio"] = audioEnabled;
+  doc["vibration"] = vibrationEnabled;
+  doc["target"] = selectedTarget;
+  doc["baseline"] = baseline;
+  doc["raw"] = rawValue;
+  doc["signal"] = filteredSignal;
+  doc["stability"] = stability;
+  doc["depth"] = depthEstimate;
+  doc["depthConfidence"] = depthConfidence;
+  doc["depthMode"] = "ESTIMATE";
+  doc["sequence"] = sequenceNumber;
+  doc["timestamp"] = millis();
+  doc["source"] = "ESP32_ADC";
+  notifyJson(doc);
 }
 
-// ============================================================
-// AUDIO
-// ============================================================
+void sendError(const char* error, const String& command) {
+  StaticJsonDocument<384> doc;
+  doc["type"] = "error";
+  doc["error"] = error;
+  doc["command"] = command;
+  doc["timestamp"] = millis();
+  notifyJson(doc);
+}
 
-void updateAudio(
-    float signal
-) {
-
-  if (!audioEnabled ||
-      !scanning ||
-      signal < 10) {
-
+void updateAudio(float signal) {
+  if (!audioEnabled || !scanning || signal < 10.0f) {
     noTone(BUZZER_PIN);
-
     return;
   }
 
-  int frequency =
-      map(
-          (int)signal,
-          10,
-          100,
-          500,
-          2500
-      );
-
-  frequency =
-      constrain(
-          frequency,
-          500,
-          2500
-      );
-
-  tone(
-      BUZZER_PIN,
-      frequency
-  );
+  int frequency = map((int)signal, 10, 100, 500, 2500);
+  frequency = constrain(frequency, 500, 2500);
+  tone(BUZZER_PIN, frequency);
 }
 
-// ============================================================
-// VIBRATION
-// ============================================================
-
-void updateVibration(
-    float signal
-) {
-
-  if (!vibrationEnabled ||
-      !scanning ||
-      signal < 30) {
-
-    digitalWrite(
-        VIBRATION_PIN,
-        LOW
-    );
-
-    return;
-  }
-
-  digitalWrite(
-      VIBRATION_PIN,
-      HIGH
-  );
+void updateVibration(float signal) {
+  const bool active = vibrationEnabled && scanning && signal >= 30.0f;
+  digitalWrite(VIBRATION_PIN, active ? HIGH : LOW);
 }
-
-// ============================================================
-// CALIBRATION
-// ============================================================
 
 void calibrateSensor() {
-
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("STARTING REAL SENSOR CALIBRATION");
-  Serial.println("KEEP SENSOR AWAY FROM TARGET");
-  Serial.println("================================");
-
   scanning = false;
-
   noTone(BUZZER_PIN);
+  digitalWrite(VIBRATION_PIN, LOW);
 
-  digitalWrite(
-      VIBRATION_PIN,
-      LOW
-  );
+  Serial.println("GeoScan-AI: calibrating; keep coil away from targets");
 
-  const int samples = 200;
-
-  double total = 0;
-
-  for (int i = 0; i < samples; i++) {
-
-    int value =
-        analogRead(SENSOR_PIN);
-
-    total += value;
-
-    delay(5);
+  const int samples = 250;
+  double total = 0.0;
+  for (int i = 0; i < samples; ++i) {
+    total += analogRead(SENSOR_PIN);
+    delay(4);
   }
 
-  baseline =
-      total / samples;
-
-  filteredSignal = 0;
-  previousSignal = 0;
-  stability = 100;
-
-  Serial.print(
-      "BASELINE = "
-  );
-
-  Serial.println(
-      baseline,
-      2
-  );
-
+  baseline = (float)(total / samples);
+  filteredSignal = 0.0f;
+  previousSignal = 0.0f;
+  stability = 100.0f;
+  depthEstimate = 0.0f;
+  depthConfidence = 0.0f;
   sequenceNumber = 0;
 
-  if (deviceConnected) {
-
-    StaticJsonDocument<512> doc;
-
-    doc["type"] =
-        "calibration";
-
-    doc["success"] =
-        true;
-
-    doc["baseline"] =
-        baseline;
-
-    doc["signal"] =
-        0;
-
-    doc["stability"] =
-        100;
-
-    doc["timestamp"] =
-        millis();
-
-    doc["source"] =
-        "ESP32_ADC";
-
-    String output;
-
-    serializeJson(
-        doc,
-        output
-    );
-
-    notifyCharacteristic->setValue(
-        output.c_str()
-    );
-
-    notifyCharacteristic->notify();
-
-    Serial.print(
-        "CALIBRATION: "
-    );
-
-    Serial.println(
-        output
-    );
-  }
+  StaticJsonDocument<512> doc;
+  doc["type"] = "calibration";
+  doc["success"] = true;
+  doc["baseline"] = baseline;
+  doc["signal"] = 0.0f;
+  doc["stability"] = 100.0f;
+  doc["depth"] = 0.0f;
+  doc["depthMode"] = "ESTIMATE";
+  doc["timestamp"] = millis();
+  doc["source"] = "ESP32_ADC";
+  notifyJson(doc);
 }
 
-// ============================================================
-// COMMAND HANDLER
-// ============================================================
-
-void handleCommand(
-    String command
-) {
-
+void handleCommand(String command) {
   command.trim();
-
   command.toUpperCase();
-
-  Serial.print(
-      "RX COMMAND: "
-  );
-
-  Serial.println(
-      command
-  );
-
-  // ==========================================================
-  // START
-  // ==========================================================
+  Serial.print("RX: ");
+  Serial.println(command);
 
   if (command == "START") {
-
-    if (baseline <= 0) {
-
-      sendStatus();
-
-      Serial.println(
-          "Cannot start: SENSOR NOT CALIBRATED"
-      );
-
+    if (baseline <= 0.0f) {
+      sendError("NOT_CALIBRATED", command);
       return;
     }
-
     scanning = true;
-
     sendStatus();
-
     return;
   }
-
-  // ==========================================================
-  // STOP
-  // ==========================================================
 
   if (command == "STOP") {
-
     scanning = false;
-
-    noTone(
-        BUZZER_PIN
-    );
-
-    digitalWrite(
-        VIBRATION_PIN,
-        LOW
-    );
-
+    noTone(BUZZER_PIN);
+    digitalWrite(VIBRATION_PIN, LOW);
     sendStatus();
-
     return;
   }
-
-  // ==========================================================
-  // CALIBRATE
-  // ==========================================================
 
   if (command == "CALIBRATE") {
-
     calibrateSensor();
-
     return;
   }
-
-  // ==========================================================
-  // STATUS
-  // ==========================================================
 
   if (command == "GET_STATUS") {
-
     sendStatus();
-
     return;
   }
 
-  // ==========================================================
-  // AUDIO
-  // ==========================================================
-
   if (command == "AUDIO:ON") {
-
     audioEnabled = true;
-
     sendStatus();
-
     return;
   }
 
   if (command == "AUDIO:OFF") {
-
     audioEnabled = false;
-
-    noTone(
-        BUZZER_PIN
-    );
-
+    noTone(BUZZER_PIN);
     sendStatus();
-
     return;
   }
 
-  // ==========================================================
-  // VIBRATION
-  // ==========================================================
-
   if (command == "VIBRATION:ON") {
-
     vibrationEnabled = true;
-
     sendStatus();
-
     return;
   }
 
   if (command == "VIBRATION:OFF") {
-
     vibrationEnabled = false;
-
-    digitalWrite(
-        VIBRATION_PIN,
-        LOW
-    );
-
+    digitalWrite(VIBRATION_PIN, LOW);
     sendStatus();
-
     return;
   }
 
-  // ==========================================================
-  // SENSITIVITY
-  // ==========================================================
-
-  if (
-      command.startsWith(
-          "SENSITIVITY:"
-      )
-  ) {
-
-    String value =
-        command.substring(
-            strlen(
-                "SENSITIVITY:"
-            )
-        );
-
-    int newSensitivity =
-        value.toInt();
-
-    sensitivity =
-        constrain(
-            newSensitivity,
-            0,
-            100
-        );
-
+  if (command.startsWith("SENSITIVITY:")) {
+    const int value = command.substring(13).toInt();
+    sensitivity = constrain(value, 0, 100);
     sendStatus();
-
     return;
   }
 
-  // ==========================================================
-  // FILTER
-  // ==========================================================
-
-  if (
-      command.startsWith(
-          "FILTER:"
-      )
-  ) {
-
-    selectedFilter =
-        command.substring(
-            strlen(
-                "FILTER:"
-            )
-        );
-
-    sendStatus();
-
+  if (command.startsWith("FILTER:")) {
+    String value = command.substring(7);
+    if (value == "LOW" || value == "MEDIUM" || value == "HIGH" || value == "ALL") {
+      selectedFilter = value;
+      sendStatus();
+    } else {
+      sendError("INVALID_FILTER", command);
+    }
     return;
   }
 
-  // ==========================================================
-  // UNKNOWN
-  // ==========================================================
-
-  if (deviceConnected) {
-
-    StaticJsonDocument<256> doc;
-
-    doc["type"] =
-        "error";
-
-    doc["error"] =
-        "UNKNOWN_COMMAND";
-
-    doc["command"] =
-        command;
-
-    doc["timestamp"] =
-        millis();
-
-    String output;
-
-    serializeJson(
-        doc,
-        output
-    );
-
-    notifyCharacteristic->setValue(
-        output.c_str()
-    );
-
-    notifyCharacteristic->notify();
+  if (command.startsWith("TARGET:")) {
+    String value = command.substring(7);
+    if (value.length() > 0 && value.length() <= 24) {
+      selectedTarget = value;
+      sendStatus();
+    } else {
+      sendError("INVALID_TARGET", command);
+    }
+    return;
   }
+
+  sendError("UNKNOWN_COMMAND", command);
 }
 
-// ============================================================
-// WRITE CALLBACK
-// ============================================================
-
-class GeoScanWriteCallbacks
-    : public BLECharacteristicCallbacks {
-
-  void onWrite(
-      BLECharacteristic* characteristic
-  ) override {
-
-    std::string value =
-        characteristic->getValue();
-
-    if (value.length() == 0) {
-      return;
-    }
-
-    String command =
-        String(
-            value.c_str()
-        );
-
-    handleCommand(
-        command
-    );
+class GeoScanWriteCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* characteristic) override {
+    const std::string value = characteristic->getValue();
+    if (value.empty()) return;
+    handleCommand(String(value.c_str()));
   }
 };
 
-// ============================================================
-// BLE SETUP
-// ============================================================
-
 void setupBLE() {
+  BLEDevice::init(DEVICE_NAME);
 
-  BLEDevice::init(
-      DEVICE_NAME
-  );
+  BLEServer* server = BLEDevice::createServer();
+  server->setCallbacks(new GeoScanServerCallbacks());
 
-  BLEServer* server =
-      BLEDevice::createServer();
+  BLEService* service = server->createService(SERVICE_UUID);
 
-  server->setCallbacks(
-      new GeoScanServerCallbacks()
-  );
+  notifyCharacteristic = service->createCharacteristic(
+      NOTIFY_UUID,
+      BLECharacteristic::PROPERTY_NOTIFY);
+  notifyCharacteristic->addDescriptor(new BLE2902());
 
-  BLEService* service =
-      server->createService(
-          SERVICE_UUID
-      );
-
-  // ESP32 -> Phone
-  notifyCharacteristic =
-      service->createCharacteristic(
-          NOTIFY_UUID,
-          BLECharacteristic::PROPERTY_NOTIFY
-      );
-
-  notifyCharacteristic->addDescriptor(
-      new BLE2902()
-  );
-
-  // Phone -> ESP32
-  writeCharacteristic =
-      service->createCharacteristic(
-          WRITE_UUID,
-          BLECharacteristic::PROPERTY_WRITE |
-          BLECharacteristic::PROPERTY_WRITE_NR
-      );
-
-  writeCharacteristic->setCallbacks(
-      new GeoScanWriteCallbacks()
-  );
+  writeCharacteristic = service->createCharacteristic(
+      WRITE_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  writeCharacteristic->setCallbacks(new GeoScanWriteCallbacks());
 
   service->start();
 
-  BLEAdvertising* advertising =
-      BLEDevice::getAdvertising();
-
-  advertising->addServiceUUID(
-      SERVICE_UUID
-  );
-
-  advertising->setScanResponse(
-      true
-  );
-
-  advertising->setMinPreferred(
-      0x06
-  );
-
-  advertising->setMinPreferred(
-      0x12
-  );
-
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(SERVICE_UUID);
+  advertising->setScanResponse(true);
+  advertising->setMinPreferred(0x06);
+  advertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
 
-  Serial.println();
-  Serial.println(
-      "================================"
-  );
-  Serial.println(
-      "GeoScan AI BLE READY"
-  );
-  Serial.println(
-      "Device: GeoScan-AI"
-  );
-  Serial.println(
-      "REAL ADC DATA MODE"
-  );
-  Serial.println(
-      "================================"
-  );
+  Serial.println("GeoScan-AI BLE READY");
 }
-
-// ============================================================
-// SETUP
-// ============================================================
 
 void setup() {
+  Serial.begin(115200);
+  delay(300);
 
-  Serial.begin(
-      115200
-  );
+  pinMode(SENSOR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(VIBRATION_PIN, OUTPUT);
+  digitalWrite(VIBRATION_PIN, LOW);
 
-  delay(1000);
-
-  Serial.println();
-  Serial.println(
-      "GeoScan AI ESP32 STARTING..."
-  );
-
-  // ADC
-  pinMode(
-      SENSOR_PIN,
-      INPUT
-  );
-
-  // Buzzer
-  pinMode(
-      BUZZER_PIN,
-      OUTPUT
-  );
-
-  // Vibration
-  pinMode(
-      VIBRATION_PIN,
-      OUTPUT
-  );
-
-  digitalWrite(
-      VIBRATION_PIN,
-      LOW
-  );
-
-  noTone(
-      BUZZER_PIN
-  );
-
-  // ADC resolution
   analogReadResolution(12);
-
-  // ESP32 classic ADC
-  analogSetPinAttenuation(
-      SENSOR_PIN,
-      ADC_11db
-  );
-
-  // ----------------------------------------------------------
-  // Initial calibration
-  // ----------------------------------------------------------
-
-  calibrateSensor();
-
-  // ----------------------------------------------------------
-  // BLE
-  // ----------------------------------------------------------
+  analogSetPinAttenuation(SENSOR_PIN, ADC_11db);
 
   setupBLE();
+  Serial.println("GeoScan-AI REAL ADC MODE");
+  Serial.println("Run CALIBRATE before START.");
 }
 
-// ============================================================
-// LOOP
-// ============================================================
-
 void loop() {
+  rawValue = analogRead(SENSOR_PIN);
 
-  // ==========================================================
-  // قراءة ADC الحقيقية
-  // ==========================================================
+  if (scanning && baseline > 0.0f) {
+    const float signal = calculateSignal(rawValue);
+    calculateStability(signal);
+    updateDepthEstimate(signal);
+    updateAudio(signal);
+    updateVibration(signal);
 
-  rawValue =
-      analogRead(
-          SENSOR_PIN
-      );
-
-  // ==========================================================
-  // حساب الإشارة
-  // ==========================================================
-
-  float signal =
-      calculateSignal(
-          rawValue
-      );
-
-  // ==========================================================
-  // حساب الاستقرار
-  // ==========================================================
-
-  float currentStability =
-      calculateStability(
-          signal
-      );
-
-  stability =
-      currentStability;
-
-  // ==========================================================
-  // صوت واهتزاز
-  // ==========================================================
-
-  updateAudio(
-      signal
-  );
-
-  updateVibration(
-      signal
-  );
-
-  // ==========================================================
-  // إرسال القراءة الحقيقية
-  // ==========================================================
-
-  if (
-      deviceConnected &&
-      scanning &&
-      millis() - lastSendTime >=
-          SEND_INTERVAL
-  ) {
-
-    lastSendTime =
-        millis();
-
-    // رقم جديد لهذه القراءة
-    sequenceNumber++;
-
-    sendSignalData(
-        signal
-    );
+    if (deviceConnected && millis() - lastSendTime >= SEND_INTERVAL) {
+      ++sequenceNumber;
+      lastSendTime = millis();
+      sendSignalData(signal);
+    }
+  } else {
+    noTone(BUZZER_PIN);
+    digitalWrite(VIBRATION_PIN, LOW);
   }
 
-  // ==========================================================
-  // Status دوري
-  // ==========================================================
-
-  if (
-      deviceConnected &&
-      millis() - lastStatusTime >=
-          STATUS_INTERVAL
-  ) {
-
-    lastStatusTime =
-        millis();
-
+  if (deviceConnected && millis() - lastStatusTime >= STATUS_INTERVAL) {
+    lastStatusTime = millis();
     sendStatus();
   }
 
