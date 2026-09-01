@@ -1,7 +1,12 @@
-name: Build Flutter APK
+name: Build GeoScan-AI APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -11,19 +16,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Flutter
+      - name: Setup Flutter 3.47
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.0"
           cache: true
 
-      - name: Generate Android project files
-        run: flutter create --platforms=android .
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Generate Android host if missing
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android .
+          fi
+
+      - name: Configure Android BLE permissions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = '<uses-permission android:name="android.permission.BLUETOOTH_SCAN"'
+          if marker not in s:
+              permissions = '''\n    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="28" />\n'''
+              s = s.replace('<application', permissions + '    <application', 1)
+              p.write_text(s)
+          PY
+
+      - name: Configure release BLE keep rule
+        shell: bash
+        run: |
+          mkdir -p android/app
+          touch android/app/proguard-rules.pro
+          grep -qxF -- '-keep class com.lib.flutter_blue_plus.* { *; }' android/app/proguard-rules.pro || \
+            echo '-keep class com.lib.flutter_blue_plus.* { *; }' >> android/app/proguard-rules.pro
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build release APK
         run: flutter build apk --release
 
       - name: Upload APK
@@ -31,4 +70,4 @@ jobs:
         with:
           name: GeoScan-AI-APK
           path: build/app/outputs/flutter-apk/app-release.apk
-        
+          if-no-files-found: error
