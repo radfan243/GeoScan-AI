@@ -4,26 +4,11 @@ import 'dart:convert';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 
 class BluetoothService {
-  // ============================================================
-  // GeoScan AI
-  // Flutter <-> ESP32 BLE
-  //
-  // SHARED SINGLETON SERVICE
-  // جميع شاشات التطبيق تستخدم نفس الاتصال
-  // ============================================================
+  static final BluetoothService _instance = BluetoothService._internal();
 
-  static final BluetoothService _instance =
-      BluetoothService._internal();
-
-  factory BluetoothService() {
-    return _instance;
-  }
+  factory BluetoothService() => _instance;
 
   BluetoothService._internal();
-
-  // ============================================================
-  // BLE UUIDs
-  // ============================================================
 
   static final fbp.Guid serviceUuid = fbp.Guid(
     '12345678-1234-1234-1234-1234567890ab',
@@ -37,605 +22,270 @@ class BluetoothService {
     '12345678-1234-1234-1234-1234567890ad',
   );
 
-  // ============================================================
-  // DEVICE
-  // ============================================================
-
   fbp.BluetoothDevice? device;
-
   fbp.BluetoothCharacteristic? notifyCharacteristic;
   fbp.BluetoothCharacteristic? writeCharacteristic;
 
-  // ============================================================
-  // SUBSCRIPTIONS
-  // ============================================================
-
   StreamSubscription<List<int>>? _notifySubscription;
-
-  StreamSubscription<fbp.BluetoothConnectionState>?
-      _connectionSubscription;
-
-  // ============================================================
-  // STREAM CONTROLLERS
-  // ============================================================
+  StreamSubscription<fbp.BluetoothConnectionState>? _connectionSubscription;
 
   final StreamController<double> _signalController =
       StreamController<double>.broadcast();
-
   final StreamController<String> _dataController =
       StreamController<String>.broadcast();
-
   final StreamController<bool> _connectionController =
       StreamController<bool>.broadcast();
 
-  // ============================================================
-  // PUBLIC STREAMS
-  // ============================================================
+  Stream<double> get signalStream => _signalController.stream;
+  Stream<String> get dataStream => _dataController.stream;
+  Stream<bool> get connectionStream => _connectionController.stream;
 
-  Stream<double> get signalStream =>
-      _signalController.stream;
-
-  Stream<String> get dataStream =>
-      _dataController.stream;
-
-  Stream<bool> get connectionStream =>
-      _connectionController.stream;
-
-  // ============================================================
-  // CONNECTION STATE
-  // ============================================================
-
-  bool get isConnected =>
-      device != null && device!.isConnected;
-
-  // ============================================================
-  // BLE SCAN
-  // ============================================================
+  bool get isConnected => device != null && device!.isConnected;
 
   Future<List<fbp.ScanResult>> scan({
-    Duration timeout =
-        const Duration(seconds: 8),
+    Duration timeout = const Duration(seconds: 8),
   }) async {
-    final List<fbp.ScanResult> results = [];
-
-    StreamSubscription<List<fbp.ScanResult>>?
-        subscription;
+    final List<fbp.ScanResult> results = <fbp.ScanResult>[];
+    StreamSubscription<List<fbp.ScanResult>>? subscription;
 
     try {
       await fbp.FlutterBluePlus.stopScan();
-
-      subscription =
-          fbp.FlutterBluePlus.scanResults.listen(
-        (scanResults) {
-          for (final result in scanResults) {
-            final exists = results.any(
-              (item) =>
-                  item.device.remoteId ==
-                  result.device.remoteId,
-            );
-
-            if (!exists) {
-              results.add(result);
-            }
-          }
-        },
-      );
+      subscription = fbp.FlutterBluePlus.scanResults.listen((scanResults) {
+        for (final result in scanResults) {
+          final exists = results.any(
+            (item) => item.device.remoteId == result.device.remoteId,
+          );
+          if (!exists) results.add(result);
+        }
+      });
 
       await fbp.FlutterBluePlus.startScan(
         timeout: timeout,
+        androidUsesFineLocation: false,
       );
 
-      await Future.delayed(timeout);
-
+      await Future<void>.delayed(timeout + const Duration(milliseconds: 250));
       await fbp.FlutterBluePlus.stopScan();
-
       await subscription.cancel();
       subscription = null;
     } catch (e) {
-      print(
-        'GeoScan AI Scan Error: $e',
-      );
-
+      print('GeoScan AI Scan Error: $e');
       try {
         await fbp.FlutterBluePlus.stopScan();
       } catch (_) {}
-
       await subscription?.cancel();
     }
 
     return results;
   }
 
-  // ============================================================
-  // CONNECT
-  // ============================================================
-
-  Future<bool> connect(
-    fbp.BluetoothDevice target,
-  ) async {
+  Future<bool> connect(fbp.BluetoothDevice target) async {
     try {
-      // إذا كان هناك اتصال سابق، نفصله أولًا
-      if (device != null) {
+      if (device != null && device!.remoteId != target.remoteId) {
         await disconnect();
       }
 
       device = target;
 
-      await device!.connect(
-        license: fbp.License.free,
-        timeout:
-            const Duration(seconds: 15),
-        autoConnect: false,
-      );
+      if (!device!.isConnected) {
+        await device!.connect(
+          license: fbp.License.free,
+          timeout: const Duration(seconds: 15),
+          autoConnect: false,
+        );
+      }
 
-      _connectionController.add(true);
-
-      // مراقبة حالة الاتصال
       await _connectionSubscription?.cancel();
+      _connectionSubscription = device!.connectionState.listen((state) {
+        final connected = state == fbp.BluetoothConnectionState.connected;
+        _connectionController.add(connected);
+        if (!connected) {
+          notifyCharacteristic = null;
+          writeCharacteristic = null;
+        }
+      });
 
-      _connectionSubscription =
-          device!.connectionState.listen(
-        (state) {
-          final connected =
-              state ==
-                  fbp.BluetoothConnectionState
-                      .connected;
-
-          _connectionController.add(
-            connected,
-          );
-
-          if (!connected) {
-            notifyCharacteristic = null;
-            writeCharacteristic = null;
-          }
-        },
-        onError: (error) {
-          print(
-            'GeoScan AI Connection State Error: $error',
-          );
-        },
-      );
-
-      // اكتشاف الخدمات
-      final services =
-          await device!.discoverServices();
-
+      final services = await device!.discoverServices();
       notifyCharacteristic = null;
       writeCharacteristic = null;
 
       for (final service in services) {
-        if (service.uuid != serviceUuid) {
-          continue;
-        }
-
-        for (final characteristic
-            in service.characteristics) {
-          if (characteristic.uuid ==
-              notifyUuid) {
-            notifyCharacteristic =
-                characteristic;
-          }
-
-          if (characteristic.uuid ==
-              writeUuid) {
-            writeCharacteristic =
-                characteristic;
+        if (service.uuid != serviceUuid) continue;
+        for (final characteristic in service.characteristics) {
+          if (characteristic.uuid == notifyUuid) {
+            notifyCharacteristic = characteristic;
+          } else if (characteristic.uuid == writeUuid) {
+            writeCharacteristic = characteristic;
           }
         }
       }
 
-      // التأكد من وجود الخصائص المطلوبة
-      if (notifyCharacteristic == null ||
-          writeCharacteristic == null) {
-        print(
-          'GeoScan AI: BLE characteristics not found',
-        );
-
+      if (notifyCharacteristic == null || writeCharacteristic == null) {
+        print('GeoScan AI: required BLE characteristics not found');
         await disconnect();
-
         return false;
       }
 
-      // تشغيل استقبال البيانات
-      final notificationStarted =
-          await startNotifications();
-
-      if (!notificationStarted) {
+      if (!await startNotifications()) {
         await disconnect();
-
         return false;
       }
 
-      // طلب حالة ESP32 الحالية
+      _connectionController.add(true);
       await getStatus();
-
       return true;
     } catch (e) {
-      print(
-        'GeoScan AI Connection Error: $e',
-      );
-
+      print('GeoScan AI Connection Error: $e');
       _connectionController.add(false);
-
+      try {
+        await device?.disconnect();
+      } catch (_) {}
       device = null;
-
       return false;
     }
   }
 
-  // ============================================================
-  // NOTIFICATIONS
-  // ============================================================
-
   Future<bool> startNotifications() async {
-    if (notifyCharacteristic == null) {
-      return false;
-    }
+    final characteristic = notifyCharacteristic;
+    if (characteristic == null) return false;
 
     try {
       await _notifySubscription?.cancel();
-
-      await notifyCharacteristic!
-          .setNotifyValue(true);
-
-      _notifySubscription =
-          notifyCharacteristic!
-              .lastValueStream
-              .listen(
-        (value) {
-          _handleIncomingData(value);
-        },
-        onError: (error) {
-          print(
-            'GeoScan AI Notification Error: $error',
-          );
-        },
+      await characteristic.setNotifyValue(true);
+      _notifySubscription = characteristic.lastValueStream.listen(
+        _handleIncomingData,
+        onError: (error) => print('GeoScan AI Notification Error: $error'),
       );
-
       return true;
     } catch (e) {
-      print(
-        'GeoScan AI Notification Start Error: $e',
-      );
-
+      print('GeoScan AI Notification Start Error: $e');
       return false;
     }
   }
 
-  // ============================================================
-  // ESP32 DATA
-  // ============================================================
-
-  void _handleIncomingData(
-    List<int> value,
-  ) {
-    if (value.isEmpty) {
-      return;
-    }
+  void _handleIncomingData(List<int> value) {
+    if (value.isEmpty) return;
 
     try {
-      final text = utf8
-          .decode(
-            value,
-            allowMalformed: true,
-          )
-          .trim();
+      final text = utf8.decode(value, allowMalformed: true).trim();
+      if (text.isEmpty) return;
 
-      if (text.isEmpty) {
-        return;
-      }
-
-      print(
-        'GeoScan AI <- ESP32: $text',
-      );
-
-      // إرسال البيانات الخام إلى جميع الشاشات
+      print('GeoScan AI <- ESP32: $text');
       _dataController.add(text);
 
-      // محاولة قراءة JSON
-      final decoded =
-          _tryParseJson(text);
+      final decoded = _tryParseJson(text);
+      final incomingSignal = decoded?['signal'] ??
+          decoded?['value'] ??
+          decoded?['strength'] ??
+          decoded?['reading'];
 
-      if (decoded != null) {
-        final incomingSignal =
-            decoded['signal'] ??
-                decoded['value'] ??
-                decoded['strength'] ??
-                decoded['reading'];
-
-        if (incomingSignal != null) {
-          final parsedSignal =
-              double.tryParse(
-                    incomingSignal.toString(),
-                  ) ??
-                  0.0;
-
-          final safeSignal =
-              parsedSignal
-                  .clamp(0.0, 100.0)
-                  .toDouble();
-
-          _signalController.add(
-            safeSignal,
-          );
-        }
+      if (incomingSignal != null) {
+        final parsed = double.tryParse(incomingSignal.toString()) ?? 0.0;
+        _signalController.add(parsed.clamp(0.0, 100.0).toDouble());
       }
     } catch (e) {
-      print(
-        'GeoScan AI Data Error: $e',
-      );
+      print('GeoScan AI Data Error: $e');
     }
   }
 
-  Map<String, dynamic>? _tryParseJson(
-    String data,
-  ) {
+  Map<String, dynamic>? _tryParseJson(String data) {
     try {
       final decoded = jsonDecode(data);
-
-      if (decoded is Map) {
-        return Map<String, dynamic>.from(
-          decoded,
-        );
-      }
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
     } catch (_) {}
-
     return null;
   }
 
-  // ============================================================
-  // SEND COMMAND
-  // ============================================================
-
-  Future<bool> sendCommand(
-    String command,
-  ) async {
-    if (!isConnected ||
-        writeCharacteristic == null) {
-      print(
-        'GeoScan AI: Write characteristic unavailable',
-      );
-
+  Future<bool> sendCommand(String command) async {
+    final characteristic = writeCharacteristic;
+    if (!isConnected || characteristic == null) {
+      print('GeoScan AI: Write characteristic unavailable');
       return false;
     }
 
     try {
       final bytes = utf8.encode(command);
-
-      final withoutResponse =
-          writeCharacteristic!
-              .properties
-              .writeWithoutResponse;
-
-      await writeCharacteristic!.write(
+      await characteristic.write(
         bytes,
-        withoutResponse:
-            withoutResponse,
+        withoutResponse: characteristic.properties.writeWithoutResponse,
       );
-
-      print(
-        'GeoScan AI -> ESP32: $command',
-      );
-
+      print('GeoScan AI -> ESP32: $command');
       return true;
     } catch (e) {
-      print(
-        'GeoScan AI Write Error: $e',
-      );
-
+      print('GeoScan AI Write Error: $e');
       return false;
     }
   }
 
-  // ============================================================
-  // START SCAN
-  // ESP32: START
-  // ============================================================
+  Future<bool> startScanning() => sendCommand('START');
+  Future<bool> startScan() => startScanning();
+  Future<bool> stopScanning() => sendCommand('STOP');
+  Future<bool> stopScan() => stopScanning();
+  Future<bool> calibrate() => sendCommand('CALIBRATE');
+  Future<bool> getStatus() => sendCommand('GET_STATUS');
 
-  Future<bool> startScanning() async {
-    return sendCommand('START');
+  Future<bool> setSensitivity(double value) {
+    final safe = value.clamp(0.0, 100.0).toDouble();
+    return sendCommand('SENSITIVITY:${safe.toStringAsFixed(0)}');
   }
 
-  // توافق مع الأكواد القديمة
-  Future<bool> startScan() async {
-    return startScanning();
-  }
-
-  // ============================================================
-  // STOP SCAN
-  // ESP32: STOP
-  // ============================================================
-
-  Future<bool> stopScanning() async {
-    return sendCommand('STOP');
-  }
-
-  // توافق مع الأكواد القديمة
-  Future<bool> stopScan() async {
-    return stopScanning();
-  }
-
-  // ============================================================
-  // CALIBRATION
-  // ESP32: CALIBRATE
-  // ============================================================
-
-  Future<bool> calibrate() async {
-    return sendCommand('CALIBRATE');
-  }
-
-  // ============================================================
-  // STATUS
-  // ESP32: GET_STATUS
-  // ============================================================
-
-  Future<bool> getStatus() async {
-    return sendCommand('GET_STATUS');
-  }
-
-  // ============================================================
-  // SENSITIVITY
-  // ESP32: SENSITIVITY:x
-  // ============================================================
-
-  Future<bool> setSensitivity(
-    double value,
-  ) async {
-    final safe =
-        value
-            .clamp(0.0, 100.0)
-            .toDouble();
-
-    return sendCommand(
-      'SENSITIVITY:${safe.toStringAsFixed(0)}',
-    );
-  }
-
-  // ============================================================
-  // FILTER
-  // Flutter Arabic -> ESP32
-  // ============================================================
-
-  Future<bool> setFilter(
-    String value,
-  ) async {
-    String filter;
-
+  Future<bool> setFilter(String value) {
+    final String filter;
     switch (value) {
       case 'منخفضة':
         filter = 'LOW';
         break;
-
       case 'عالية':
         filter = 'HIGH';
         break;
-
       case 'متوسطة':
       default:
         filter = 'MEDIUM';
         break;
     }
-
-    return sendCommand(
-      'FILTER:$filter',
-    );
+    return sendCommand('FILTER:$filter');
   }
 
-  // ============================================================
-  // AUDIO
-  // ============================================================
+  Future<bool> setAudio(bool enabled) =>
+      sendCommand(enabled ? 'AUDIO:ON' : 'AUDIO:OFF');
 
-  Future<bool> setAudio(
-    bool enabled,
-  ) async {
-    return sendCommand(
-      enabled
-          ? 'AUDIO:ON'
-          : 'AUDIO:OFF',
-    );
+  Future<bool> setVibration(bool enabled) =>
+      sendCommand(enabled ? 'VIBRATION:ON' : 'VIBRATION:OFF');
+
+  Future<bool> setTarget(String target) {
+    final cleaned = target.trim();
+    if (cleaned.isEmpty || cleaned.length > 24) return Future<bool>.value(false);
+    return sendCommand('TARGET:$cleaned');
   }
-
-  // ============================================================
-  // VIBRATION
-  // ============================================================
-
-  Future<bool> setVibration(
-    bool enabled,
-  ) async {
-    return sendCommand(
-      enabled
-          ? 'VIBRATION:ON'
-          : 'VIBRATION:OFF',
-    );
-  }
-
-  // ============================================================
-  // TARGET
-  // ESP32 الحالي لا يملك TARGET
-  // ============================================================
-
-  Future<bool> setTarget(
-    String target,
-  ) async {
-    print(
-      'GeoScan AI: Target selection is handled by Flutter.',
-    );
-
-    return true;
-  }
-
-  // ============================================================
-  // DEVICE INFO
-  // ============================================================
 
   String get deviceName {
-    if (device == null) {
-      return 'غير متصل';
-    }
-
-    final name =
-        device!.platformName;
-
-    if (name.isEmpty) {
-      return 'GeoScan-AI';
-    }
-
-    return name;
+    final current = device;
+    if (current == null) return 'غير متصل';
+    final name = current.platformName;
+    return name.isEmpty ? 'GeoScan-AI' : name;
   }
 
-  String get deviceId {
-    return device?.remoteId.str ?? '';
-  }
-
-  // ============================================================
-  // DISCONNECT
-  // ============================================================
+  String get deviceId => device?.remoteId.str ?? '';
 
   Future<void> disconnect() async {
+    await _notifySubscription?.cancel();
+    _notifySubscription = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+
     try {
-      await _notifySubscription?.cancel();
+      await notifyCharacteristic?.setNotifyValue(false);
+    } catch (_) {}
 
-      _notifySubscription = null;
-
-      await _connectionSubscription?.cancel();
-
-      _connectionSubscription = null;
-
-      if (notifyCharacteristic != null) {
-        try {
-          await notifyCharacteristic!
-              .setNotifyValue(false);
-        } catch (_) {}
-      }
-
-      if (device != null) {
-        try {
-          await device!.disconnect();
-        } catch (_) {}
-      }
-    } catch (e) {
-      print(
-        'GeoScan AI Disconnect Error: $e',
-      );
-    }
+    try {
+      await device?.disconnect();
+    } catch (_) {}
 
     notifyCharacteristic = null;
     writeCharacteristic = null;
     device = null;
-
     _connectionController.add(false);
   }
 
-  // ============================================================
-  // IMPORTANT
-  //
-  // لا نغلق StreamControllers هنا.
-  //
-  // BluetoothService مشترك طوال عمر التطبيق.
-  // ============================================================
-
-  Future<void> dispose() async {
-    await disconnect();
-  }
+  Future<void> dispose() => disconnect();
 }
