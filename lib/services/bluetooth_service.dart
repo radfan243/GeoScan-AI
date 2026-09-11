@@ -89,7 +89,7 @@ class BluetoothService {
 
       if (!device!.isConnected) {
         await device!.connect(
-          license: fbp.License.free,
+          license: fbp.License.nonprofit,
           timeout: const Duration(seconds: 15),
           autoConnect: false,
         );
